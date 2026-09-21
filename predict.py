@@ -25,6 +25,7 @@ from elo import HOME_FIELD_ADV, EloState, expected_win_prob, run_elo
 
 RB_PROP_YARDS = 40.0
 WR_PROP_YARDS = 40.0
+TE_PROP_YARDS = 40.0
 QB_PROP_YARDS = 150.0
 
 LEAGUE_AVG_PASSER_RATING = 90.0
@@ -75,6 +76,8 @@ class MatchupPrediction:
     away_rb_prop: dict | None = None
     home_wr_prop: dict | None = None  # probability of clearing WR_PROP_YARDS receiving yards, vs. this opponent
     away_wr_prop: dict | None = None
+    home_te_prop: dict | None = None  # probability of clearing TE_PROP_YARDS receiving yards, vs. this opponent
+    away_te_prop: dict | None = None
 
 
 def elo_state_as_of(schedules: pd.DataFrame, season: int, week: int) -> EloState:
@@ -336,6 +339,7 @@ def predict_matchup(
     projected_margin = elo_diff / ELO_POINTS_PER_SPREAD_POINT
 
     home_qb_prop = away_qb_prop = home_rb_prop = away_rb_prop = home_wr_prop = away_wr_prop = None
+    home_te_prop = away_te_prop = None
     if defense_hist is not None and not defense_hist.empty:
         home_hist = weekly_hist[weekly_hist["recent_team"] == home_team]
         away_hist = weekly_hist[weekly_hist["recent_team"] == away_team]
@@ -365,6 +369,14 @@ def predict_matchup(
         )
         away_wr_prop = props_mod.prop_over_probability(
             away_hist, _name(away_snapshot["wr"]), "receiving_yards", WR_PROP_YARDS,
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_yards_allowed"),
+        )
+        home_te_prop = props_mod.prop_over_probability(
+            home_hist, _name(home_snapshot["te"]), "receiving_yards", TE_PROP_YARDS,
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receiving_yards_allowed"),
+        )
+        away_te_prop = props_mod.prop_over_probability(
+            away_hist, _name(away_snapshot["te"]), "receiving_yards", TE_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_yards_allowed"),
         )
 
@@ -399,4 +411,6 @@ def predict_matchup(
         away_rb_prop=away_rb_prop,
         home_wr_prop=home_wr_prop,
         away_wr_prop=away_wr_prop,
+        home_te_prop=home_te_prop,
+        away_te_prop=away_te_prop,
     )

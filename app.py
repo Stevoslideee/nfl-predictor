@@ -256,6 +256,7 @@ with predict_tab:
                 st.markdown(player_line("WR", pred.home_wr))
                 show_prop(40, pred.home_wr_prop)
                 st.markdown(player_line("TE", pred.home_te))
+                show_prop(40, pred.home_te_prop)
             with pc2:
                 st.caption(away_team)
                 st.markdown(player_line("QB", pred.away_qb))
@@ -265,6 +266,7 @@ with predict_tab:
                 st.markdown(player_line("WR", pred.away_wr))
                 show_prop(40, pred.away_wr_prop)
                 st.markdown(player_line("TE", pred.away_te))
+                show_prop(40, pred.away_te_prop)
 
         with st.expander("🏈 Team ratings & top skill players"):
             ec1, ec2 = st.columns(2)

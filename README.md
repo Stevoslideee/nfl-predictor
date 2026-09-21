@@ -130,7 +130,7 @@ The app has three tabs:
   starting QB is Out/Doubtful, the prediction automatically swaps in their
   backup's recent form and says so; Questionable gets an info note without
   a swap. Rest, divisional, and weather notes show up here too when they apply.
-  Each team's top QB/RB/WR also gets an opponent-adjusted likelihood of
+  Each team's top QB/RB/WR/TE also gets an opponent-adjusted likelihood of
   clearing a yardage threshold (150+ passing, 40+ rushing/receiving) - see
   `props.py` below for how that's calculated.
 - **Live & Recent Player Stats** - current or past-week scores (auto-refreshes
@@ -214,7 +214,7 @@ table - useful for scripting or a quick terminal check without opening the app.
   Only called for upcoming games at outdoor stadiums; past games use the
   actual recorded temp/wind already in the schedule data.
 - **`props.py`** - "will this player clear N yards" probabilities for the
-  Matchup Predictor's top QB/RB/WR. Fits a normal distribution to the
+  Matchup Predictor's top QB/RB/WR/TE. Fits a normal distribution to the
   player's own trailing game log (real mean and variance, not assumed),
   then shifts that mean by how much more or less than league-average the
   specific upcoming opponent has allowed in that stat recently (derived
