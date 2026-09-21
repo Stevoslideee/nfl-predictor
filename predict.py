@@ -28,6 +28,10 @@ WR_PROP_YARDS = 40.0
 TE_PROP_YARDS = 40.0
 QB_PROP_YARDS = 150.0
 
+RB_REC_THRESHOLD = 2.0
+WR_REC_THRESHOLD = 3.0
+TE_REC_THRESHOLD = 2.0
+
 LEAGUE_AVG_PASSER_RATING = 90.0
 ELO_PER_PASSER_RATING_POINT = 3.0  # how many Elo points one passer-rating point differential is worth
 MAX_QB_ELO_ADJUSTMENT = 60.0  # cap so one great/bad QB game stretch can't dominate the model
@@ -78,6 +82,18 @@ class MatchupPrediction:
     away_wr_prop: dict | None = None
     home_te_prop: dict | None = None  # probability of clearing TE_PROP_YARDS receiving yards, vs. this opponent
     away_te_prop: dict | None = None
+    home_rb_rec_prop: dict | None = None  # probability of clearing *_REC_THRESHOLD receptions, vs. this opponent
+    away_rb_rec_prop: dict | None = None
+    home_wr_rec_prop: dict | None = None
+    away_wr_rec_prop: dict | None = None
+    home_te_rec_prop: dict | None = None
+    away_te_rec_prop: dict | None = None
+    home_rb_td_prop: dict | None = None  # probability of scoring at least one TD, vs. this opponent
+    away_rb_td_prop: dict | None = None
+    home_wr_td_prop: dict | None = None
+    away_wr_td_prop: dict | None = None
+    home_te_td_prop: dict | None = None
+    away_te_td_prop: dict | None = None
 
 
 def elo_state_as_of(schedules: pd.DataFrame, season: int, week: int) -> EloState:
@@ -340,6 +356,10 @@ def predict_matchup(
 
     home_qb_prop = away_qb_prop = home_rb_prop = away_rb_prop = home_wr_prop = away_wr_prop = None
     home_te_prop = away_te_prop = None
+    home_rb_rec_prop = away_rb_rec_prop = home_wr_rec_prop = away_wr_rec_prop = None
+    home_te_rec_prop = away_te_rec_prop = None
+    home_rb_td_prop = away_rb_td_prop = home_wr_td_prop = away_wr_td_prop = None
+    home_te_td_prop = away_te_td_prop = None
     if defense_hist is not None and not defense_hist.empty:
         home_hist = weekly_hist[weekly_hist["recent_team"] == home_team]
         away_hist = weekly_hist[weekly_hist["recent_team"] == away_team]
@@ -354,6 +374,12 @@ def predict_matchup(
         rb_pop_std = props_mod.population_std(weekly_hist, "RB", "rushing_yards")
         wr_pop_std = props_mod.population_std(weekly_hist, "WR", "receiving_yards")
         te_pop_std = props_mod.population_std(weekly_hist, "TE", "receiving_yards")
+        rb_rec_pop_std = props_mod.population_std(weekly_hist, "RB", "receptions")
+        wr_rec_pop_std = props_mod.population_std(weekly_hist, "WR", "receptions")
+        te_rec_pop_std = props_mod.population_std(weekly_hist, "TE", "receptions")
+        rb_td_pop_rate = props_mod.population_td_rate(weekly_hist, "RB", "rushing_tds")
+        wr_td_pop_rate = props_mod.population_td_rate(weekly_hist, "WR", "receiving_tds")
+        te_td_pop_rate = props_mod.population_td_rate(weekly_hist, "TE", "receiving_tds")
 
         home_qb_prop = props_mod.prop_over_probability(
             home_hist, effective_home_qb.get("player_name"), "passing_yards", QB_PROP_YARDS,
@@ -396,6 +422,68 @@ def predict_matchup(
             population_std=te_pop_std,
         )
 
+        home_rb_rec_prop = props_mod.prop_over_probability(
+            home_hist, _name(home_snapshot["rb"]), "receptions", RB_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receptions_allowed"),
+            population_std=rb_rec_pop_std,
+        )
+        away_rb_rec_prop = props_mod.prop_over_probability(
+            away_hist, _name(away_snapshot["rb"]), "receptions", RB_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receptions_allowed"),
+            population_std=rb_rec_pop_std,
+        )
+        home_wr_rec_prop = props_mod.prop_over_probability(
+            home_hist, _name(home_snapshot["wr"]), "receptions", WR_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receptions_allowed"),
+            population_std=wr_rec_pop_std,
+        )
+        away_wr_rec_prop = props_mod.prop_over_probability(
+            away_hist, _name(away_snapshot["wr"]), "receptions", WR_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receptions_allowed"),
+            population_std=wr_rec_pop_std,
+        )
+        home_te_rec_prop = props_mod.prop_over_probability(
+            home_hist, _name(home_snapshot["te"]), "receptions", TE_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receptions_allowed"),
+            population_std=te_rec_pop_std,
+        )
+        away_te_rec_prop = props_mod.prop_over_probability(
+            away_hist, _name(away_snapshot["te"]), "receptions", TE_REC_THRESHOLD,
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receptions_allowed"),
+            population_std=te_rec_pop_std,
+        )
+
+        home_rb_td_prop = props_mod.anytime_td_probability(
+            home_hist, _name(home_snapshot["rb"]), "rushing_tds",
+            factor=props_mod.matchup_factor(defense_hist, away_team, "rushing_tds_allowed"),
+            population_rate=rb_td_pop_rate,
+        )
+        away_rb_td_prop = props_mod.anytime_td_probability(
+            away_hist, _name(away_snapshot["rb"]), "rushing_tds",
+            factor=props_mod.matchup_factor(defense_hist, home_team, "rushing_tds_allowed"),
+            population_rate=rb_td_pop_rate,
+        )
+        home_wr_td_prop = props_mod.anytime_td_probability(
+            home_hist, _name(home_snapshot["wr"]), "receiving_tds",
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receiving_tds_allowed"),
+            population_rate=wr_td_pop_rate,
+        )
+        away_wr_td_prop = props_mod.anytime_td_probability(
+            away_hist, _name(away_snapshot["wr"]), "receiving_tds",
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_tds_allowed"),
+            population_rate=wr_td_pop_rate,
+        )
+        home_te_td_prop = props_mod.anytime_td_probability(
+            home_hist, _name(home_snapshot["te"]), "receiving_tds",
+            factor=props_mod.matchup_factor(defense_hist, away_team, "receiving_tds_allowed"),
+            population_rate=te_td_pop_rate,
+        )
+        away_te_td_prop = props_mod.anytime_td_probability(
+            away_hist, _name(away_snapshot["te"]), "receiving_tds",
+            factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_tds_allowed"),
+            population_rate=te_td_pop_rate,
+        )
+
     return MatchupPrediction(
         home_team=home_team,
         away_team=away_team,
@@ -429,4 +517,16 @@ def predict_matchup(
         away_wr_prop=away_wr_prop,
         home_te_prop=home_te_prop,
         away_te_prop=away_te_prop,
+        home_rb_rec_prop=home_rb_rec_prop,
+        away_rb_rec_prop=away_rb_rec_prop,
+        home_wr_rec_prop=home_wr_rec_prop,
+        away_wr_rec_prop=away_wr_rec_prop,
+        home_te_rec_prop=home_te_rec_prop,
+        away_te_rec_prop=away_te_rec_prop,
+        home_rb_td_prop=home_rb_td_prop,
+        away_rb_td_prop=away_rb_td_prop,
+        home_wr_td_prop=home_wr_td_prop,
+        away_wr_td_prop=away_wr_td_prop,
+        home_te_td_prop=home_te_td_prop,
+        away_te_td_prop=away_te_td_prop,
     )

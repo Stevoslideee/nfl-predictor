@@ -71,7 +71,11 @@ def load_weekly_player_stats(seasons: list[int]) -> pd.DataFrame:
 
 TEAM_STATS_URL = "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_{0}.parquet"
 
-TEAM_STATS_COLUMNS = ["team", "opponent_team", "season", "week", "rushing_yards", "receiving_yards", "passing_yards"]
+TEAM_STATS_COLUMNS = [
+    "team", "opponent_team", "season", "week",
+    "rushing_yards", "receiving_yards", "passing_yards",
+    "rushing_tds", "receiving_tds", "receptions",
+]
 
 
 def _fetch_one_season_team_stats(season: int) -> pd.DataFrame:
@@ -87,15 +91,22 @@ def _fetch_one_season_team_stats(season: int) -> pd.DataFrame:
 
 
 def load_team_weekly_stats(seasons: list[int]) -> pd.DataFrame:
-    """Team-level weekly offensive stats (rushing/receiving/passing yards), keyed by
-    (team, opponent_team, season, week)."""
-    return _cached_per_season("team_stats", seasons, _fetch_one_season_team_stats)
+    """Team-level weekly offensive stats (rushing/receiving/passing yards and TDs,
+    receptions), keyed by (team, opponent_team, season, week).
+
+    Cached under a "v2" prefix - the plain "team_stats" prefix was used before TD/
+    reception columns were added, so pre-existing "team_stats_{season}.parquet" files
+    lack them. Reusing that prefix would silently read stale, narrower cached files
+    instead of re-fetching, causing a KeyError the first time a TD/reception column
+    is used.
+    """
+    return _cached_per_season("team_stats_v2", seasons, _fetch_one_season_team_stats)
 
 
 def defense_allowed_view(team_stats: pd.DataFrame) -> pd.DataFrame:
     """Reframe team-level offensive output as what the OPPONENT's defense allowed that
-    week - team A's own rushing/receiving/passing yards in a given game are exactly what
-    team B's defense gave up, so this is a rename, not a new fetch."""
+    week - team A's own rushing/receiving/passing yards (and TDs, receptions) in a given
+    game are exactly what team B's defense gave up, so this is a rename, not a new fetch."""
     return team_stats.rename(
         columns={
             "team": "offense_team",
@@ -103,6 +114,9 @@ def defense_allowed_view(team_stats: pd.DataFrame) -> pd.DataFrame:
             "rushing_yards": "rushing_yards_allowed",
             "receiving_yards": "receiving_yards_allowed",
             "passing_yards": "passing_yards_allowed",
+            "rushing_tds": "rushing_tds_allowed",
+            "receiving_tds": "receiving_tds_allowed",
+            "receptions": "receptions_allowed",
         }
     )
 

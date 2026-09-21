@@ -130,9 +130,10 @@ The app has three tabs:
   starting QB is Out/Doubtful, the prediction automatically swaps in their
   backup's recent form and says so; Questionable gets an info note without
   a swap. Rest, divisional, and weather notes show up here too when they apply.
-  Each team's top QB/RB/WR/TE also gets an opponent-adjusted likelihood of
-  clearing a yardage threshold (150+ passing, 40+ rushing/receiving) - see
-  `props.py` below for how that's calculated.
+  Each team's top QB/RB/WR/TE also gets opponent-adjusted likelihoods for
+  yardage (150+ passing, 40+ rushing/receiving), receptions (2-3+,
+  position-dependent), and an anytime touchdown - see `props.py` below for
+  how each is calculated.
 - **Live & Recent Player Stats** - current or past-week scores (auto-refreshes
   every 30s while a game is live), with a full box score per team, each
   team's injury report, and each player's trailing 5-game average shown
@@ -230,22 +231,27 @@ table - useful for scripting or a quick terminal check without opening the app.
   (free, no API key), with a hardcoded coordinate table for all 32 teams.
   Only called for upcoming games at outdoor stadiums; past games use the
   actual recorded temp/wind already in the schedule data.
-- **`props.py`** - "will this player clear N yards" probabilities for the
-  Matchup Predictor's top QB/RB/WR/TE. Fits a normal distribution to the
-  player's own trailing game log (real mean and variance, not assumed),
-  blending in the real league-wide variance for that stat/position
-  (`population_std()`) when a player has too little history of their own
-  to trust their own sample variance - a rookie's first start or a new
-  starter isn't hidden, but also isn't given a wildly overconfident number
-  built on one data point. Then shifts that mean by how much more or less
-  than league-average the specific upcoming opponent has allowed in that
-  stat recently (derived
-  from `data.defense_allowed_view()` - nflverse has no direct "yards
-  allowed" field, but a team's defense-allowed stats are just its
-  opponents' own offensive output in those games). This is a standard
-  technique (the same idea behind DFS/fantasy matchup ratings), not yet
-  backtested for calibration the way the win-probability model is - treat
-  it as directional context, not a precise forecast.
+- **`props.py`** - opponent-adjusted probabilities for the Matchup
+  Predictor's top QB/RB/WR/TE, covering yardage, receptions, and anytime
+  touchdowns. Yardage and receptions (`prop_over_probability`) fit a normal
+  distribution to the player's own trailing game log (real mean and
+  variance, not assumed); touchdowns (`anytime_td_probability`) use a
+  Poisson model instead, since TD counts are small, discrete, and
+  right-skewed - a normal curve would put real probability mass on
+  negative touchdowns, which a Poisson process doesn't. Both blend the
+  player's own numbers toward the real league-wide value for that
+  stat/position (`population_std()` / `population_td_rate()`) when a
+  player has too little history of their own to trust alone - a rookie's
+  first start or a new starter isn't hidden, but also isn't given a
+  wildly overconfident number built on one data point. Both then shift
+  by how much more or less than league-average the specific upcoming
+  opponent has allowed in that stat recently (derived from
+  `data.defense_allowed_view()` - nflverse has no direct "allowed" field,
+  but a team's defense-allowed stats are just its opponents' own
+  offensive output in those games). This is a standard technique (the
+  same idea behind DFS/fantasy matchup ratings), not yet backtested for
+  calibration the way the win-probability model is - treat it as
+  directional context, not a precise forecast.
 - **`backtest.py`** - replays history to measure real accuracy instead of
   assuming it, comparing plain Elo, Elo + QB form, and the full
   context-adjusted model side by side.

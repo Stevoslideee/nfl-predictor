@@ -2,22 +2,31 @@
 adjusted for how the SPECIFIC opponent has defended that stat recently, not just a
 generic average pulled from the player's own history in isolation.
 
-Method: fit a normal distribution to the player's trailing game log (mean and
-variance from real games, not assumed), then shift that mean by how much more or less
-than league-average the upcoming opponent has allowed in that stat recently. This is a
-standard, simple technique (the same idea behind DFS/fantasy matchup ratings) - not a
-guarantee, and not yet backtested for calibration the way the win-probability model is,
-so treat the number as directional context, not a precise forecast.
+Two different distributions are used deliberately, for two different kinds of stat:
 
-With only 1-2 games, a player's own sample variance is either undefined or too noisy to
-trust (a rookie's first start, a committee back who just took over volume). Rather than
-hide the estimate or fabricate a spread, `prop_over_probability` blends the player's own
-variance toward the real league-wide game-to-game variance for that stat/position
-(`population_std`, computed from real historical games via `population_std()`) - the
-less of their own history there is, the more the estimate leans on real variance from
+- Yardage and receptions (`prop_over_probability`): fits a NORMAL distribution to the
+  player's trailing game log (mean and variance from real games, not assumed), then
+  shifts that mean by how much more or less than league-average the upcoming opponent
+  has allowed recently. Reasonable for a roughly continuous, moderately-sized count.
+- Touchdowns (`anytime_td_probability`): TD counts are small, discrete, and heavily
+  right-skewed (usually 0, occasionally 1, rarely more) - fitting a normal distribution
+  to that would badly misrepresent it (a normal curve puts real probability mass on
+  negative touchdowns). Modeled instead as a Poisson process, the standard approach for
+  rare-count sports events: P(at least one) = 1 - e^(-rate).
+
+Neither is a guarantee, and neither is yet backtested for calibration the way the
+win-probability model is - treat these as directional context, not a precise forecast.
+
+With only 1-2 games, a player's own sample variance/rate is either undefined or too
+noisy to trust (a rookie's first start, a committee back who just took over volume).
+Rather than hide the estimate or fabricate a spread, both functions blend the player's
+own numbers toward the real league-wide value for that stat/position
+(`population_std`/`population_td_rate`, computed from real historical games) - the less
+of their own history there is, the more the estimate leans on real values from
 comparable players, converging to pure self-history once there's enough of it.
 """
 
+import math
 from statistics import NormalDist
 
 import pandas as pd
@@ -39,6 +48,16 @@ def population_std(league_hist: pd.DataFrame, position: str, stat_col: str) -> f
     if len(values) < 2:
         return None
     return float(values.std())
+
+
+def population_td_rate(league_hist: pd.DataFrame, position: str, td_col: str) -> float | None:
+    """Real league-wide average TDs/game for this stat/position - the Poisson-model
+    analog of population_std(). A Poisson distribution has only one parameter (its
+    rate), so shrinkage here blends rates directly rather than variances."""
+    values = league_hist.loc[league_hist["position"] == position, td_col].dropna()
+    if len(values) < 2:
+        return None
+    return float(values.mean())
 
 
 def defense_allowed_trailing(defense_hist: pd.DataFrame, team: str, stat_col: str, n_games: int = 5) -> float | None:
@@ -110,6 +129,48 @@ def prop_over_probability(
         "probability": max(0.0, min(1.0, probability)),
         "own_avg": round(own_mean, 1),
         "matchup_adjusted_avg": round(adj_mean, 1),
+        "matchup_factor": round(factor, 2),
+        "games": games,
+    }
+
+
+def anytime_td_probability(
+    team_hist: pd.DataFrame,
+    player_name: str | None,
+    td_col: str,
+    factor: float = 1.0,
+    n_games: int = 5,
+    population_rate: float | None = None,
+) -> dict | None:
+    """Probability this player scores at least one TD in `td_col`, modeled as a Poisson
+    process (see the module docstring for why, not a normal approximation). `factor`
+    shifts the rate the same way prop_over_probability's factor shifts a mean.
+
+    `population_rate` steadies a small sample the same way population_std does for
+    prop_over_probability, blended directly in rate space since a Poisson distribution
+    has no separate variance parameter to blend.
+    """
+    if player_name is None:
+        return None
+    rows = team_hist[team_hist["player_name"] == player_name].sort_values(["season", "week"]).tail(n_games)
+    values = rows[td_col].dropna()
+    games = len(values)
+    if games < MIN_GAMES_FOR_ESTIMATE:
+        return None
+
+    own_rate = float(values.mean())
+    if population_rate:
+        prior_games = SHRINKAGE_PRIOR_GAMES
+        blended_rate = (own_rate * games + population_rate * prior_games) / (games + prior_games)
+    else:
+        blended_rate = own_rate
+
+    adj_rate = max(blended_rate * factor, 0.0)
+    probability = 1 - math.exp(-adj_rate)
+    return {
+        "probability": max(0.0, min(1.0, probability)),
+        "own_avg": round(own_rate, 2),
+        "matchup_adjusted_avg": round(adj_rate, 2),
         "matchup_factor": round(factor, 2),
         "games": games,
     }

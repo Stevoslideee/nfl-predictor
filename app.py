@@ -10,7 +10,16 @@ import live
 import odds as odds_mod
 import player_stats
 from data import load_injuries, load_schedules, load_team_weekly_stats, load_weekly_player_stats
-from predict import defense_hist_as_of, elo_state_as_of, predict_matchup, prefetch_weather_for_matchups, weekly_hist_as_of
+from predict import (
+    RB_REC_THRESHOLD,
+    TE_REC_THRESHOLD,
+    WR_REC_THRESHOLD,
+    defense_hist_as_of,
+    elo_state_as_of,
+    predict_matchup,
+    prefetch_weather_for_matchups,
+    weekly_hist_as_of,
+)
 from weekly_report import build_recap_row, build_report_row, favorite
 
 SEASONS = list(range(2010, dt.date.today().year + 1))
@@ -239,12 +248,34 @@ with predict_tab:
                 unsafe_allow_html=True,
             )
 
+        def show_rec_prop(threshold: float, prop: dict | None) -> None:
+            if not prop:
+                return
+            pct = prop["probability"] * 100
+            st.markdown(
+                f"&nbsp;&nbsp;↳ {pct:.0f}% chance of {threshold:g}+ receptions "
+                f"(own avg {prop['own_avg']}, matchup-adjusted {prop['matchup_adjusted_avg']})",
+                unsafe_allow_html=True,
+            )
+
+        def show_td_prop(prop: dict | None) -> None:
+            if not prop:
+                return
+            pct = prop["probability"] * 100
+            st.markdown(
+                f"&nbsp;&nbsp;↳ {pct:.0f}% chance of a TD "
+                f"(own rate {prop['own_avg']}/gm, matchup-adjusted {prop['matchup_adjusted_avg']}/gm)",
+                unsafe_allow_html=True,
+            )
+
         with st.expander("📊 Projected key players (QB / RB / WR / TE)"):
             st.caption(
-                "Each player's own trailing 5-game average, plus an opponent-adjusted "
-                "likelihood of clearing a yardage threshold - a normal-distribution "
-                "estimate from real games, not a guarantee, and not yet backtested for "
-                "calibration the way the win-probability model is."
+                "Each player's own trailing 5-game average, plus opponent-adjusted "
+                "likelihoods for yardage, receptions, and touchdowns. Yardage/receptions "
+                "use a normal-distribution estimate; touchdowns use a Poisson model "
+                "(more appropriate for a small, discrete count) - neither is a guarantee, "
+                "and neither is yet backtested for calibration the way the win-probability "
+                "model is."
             )
             pc1, pc2 = st.columns(2)
             with pc1:
@@ -253,20 +284,32 @@ with predict_tab:
                 show_prop(150, pred.home_qb_prop)
                 st.markdown(player_line("RB", pred.home_rb))
                 show_prop(40, pred.home_rb_prop)
+                show_rec_prop(RB_REC_THRESHOLD, pred.home_rb_rec_prop)
+                show_td_prop(pred.home_rb_td_prop)
                 st.markdown(player_line("WR", pred.home_wr))
                 show_prop(40, pred.home_wr_prop)
+                show_rec_prop(WR_REC_THRESHOLD, pred.home_wr_rec_prop)
+                show_td_prop(pred.home_wr_td_prop)
                 st.markdown(player_line("TE", pred.home_te))
                 show_prop(40, pred.home_te_prop)
+                show_rec_prop(TE_REC_THRESHOLD, pred.home_te_rec_prop)
+                show_td_prop(pred.home_te_td_prop)
             with pc2:
                 st.caption(away_team)
                 st.markdown(player_line("QB", pred.away_qb))
                 show_prop(150, pred.away_qb_prop)
                 st.markdown(player_line("RB", pred.away_rb))
                 show_prop(40, pred.away_rb_prop)
+                show_rec_prop(RB_REC_THRESHOLD, pred.away_rb_rec_prop)
+                show_td_prop(pred.away_rb_td_prop)
                 st.markdown(player_line("WR", pred.away_wr))
                 show_prop(40, pred.away_wr_prop)
+                show_rec_prop(WR_REC_THRESHOLD, pred.away_wr_rec_prop)
+                show_td_prop(pred.away_wr_td_prop)
                 st.markdown(player_line("TE", pred.away_te))
                 show_prop(40, pred.away_te_prop)
+                show_rec_prop(TE_REC_THRESHOLD, pred.away_te_rec_prop)
+                show_td_prop(pred.away_te_td_prop)
 
         with st.expander("🏈 Team ratings & top skill players"):
             ec1, ec2 = st.columns(2)

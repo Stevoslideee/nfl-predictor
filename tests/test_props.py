@@ -1,16 +1,19 @@
+import math
+
 import pandas as pd
 
-from props import matchup_factor, population_std, prop_over_probability
+from props import anytime_td_probability, matchup_factor, population_std, population_td_rate, prop_over_probability
 
 
 def _hist(rows):
     return pd.DataFrame(rows)
 
 
-def _game(player, position, season, week, rushing_yards=0.0, receiving_yards=0.0):
+def _game(player, position, season, week, rushing_yards=0.0, receiving_yards=0.0, rushing_tds=0.0, receiving_tds=0.0):
     return dict(
         player_name=player, position=position, season=season, week=week,
         rushing_yards=rushing_yards, receiving_yards=receiving_yards,
+        rushing_tds=rushing_tds, receiving_tds=receiving_tds,
     )
 
 
@@ -93,3 +96,49 @@ def test_population_std_filters_by_position():
     std = population_std(hist, "RB", "rushing_yards")
     assert std is not None
     assert std == pd.Series([10.0, 90.0]).std()
+
+
+def test_anytime_td_probability_none_for_missing_player():
+    assert anytime_td_probability(_hist([]), None, "rushing_tds") is None
+
+
+def test_anytime_td_probability_zero_rate_gives_zero_probability():
+    hist = _hist([_game("A.Back", "RB", 2024, w, rushing_tds=0) for w in range(1, 6)])
+    result = anytime_td_probability(hist, "A.Back", "rushing_tds")
+    assert result["probability"] == 0.0
+
+
+def test_anytime_td_probability_matches_poisson_formula():
+    hist = _hist([_game("A.Back", "RB", 2024, w, rushing_tds=1) for w in range(1, 6)])
+    result = anytime_td_probability(hist, "A.Back", "rushing_tds")
+    # own_rate=1.0/game, no population blend -> P(>=1) = 1 - e^-1
+    assert abs(result["probability"] - (1 - math.exp(-1.0))) < 1e-9
+
+
+def test_anytime_td_probability_single_game_blends_toward_population():
+    hist = _hist([_game("A.Back", "RB", 2024, 1, rushing_tds=1)])
+    result = anytime_td_probability(hist, "A.Back", "rushing_tds", population_rate=0.3)
+    assert result is not None
+    assert 0.0 < result["probability"] < 1.0
+    # blended rate should sit strictly between the population rate and the single
+    # observed game's rate, not equal either extreme
+    assert 0.3 < result["matchup_adjusted_avg"] < 1.0
+
+
+def test_anytime_td_probability_bounds_stay_in_zero_one():
+    hist = _hist([_game("A.Back", "RB", 2024, w, rushing_tds=5) for w in range(1, 6)])
+    result = anytime_td_probability(hist, "A.Back", "rushing_tds", factor=3.0)
+    assert 0.0 <= result["probability"] <= 1.0
+
+
+def test_population_td_rate_none_for_insufficient_data():
+    hist = pd.DataFrame([_game("A.Back", "RB", 2024, 1, rushing_tds=1)])
+    assert population_td_rate(hist, "RB", "rushing_tds") is None
+
+
+def test_population_td_rate_correct_value():
+    hist = pd.DataFrame([
+        _game("A.Back", "RB", 2024, 1, rushing_tds=0),
+        _game("B.Back", "RB", 2024, 2, rushing_tds=2),
+    ])
+    assert population_td_rate(hist, "RB", "rushing_tds") == 1.0
