@@ -159,6 +159,23 @@ changing the model. Pass `--skip-context` to compare only plain Elo vs.
 Elo + QB form (faster - skips loading injury data and computing the
 injury/rest/division/weather variant).
 
+## Run the tests
+
+```bash
+venv\Scripts\pip install -r requirements-dev.txt
+venv\Scripts\python -m pytest tests/ -v
+```
+
+Unit tests for the model logic (Elo math, the QB-form tenure weighting,
+prop-probability shrinkage, starter identification) - all on small,
+hand-built data rather than real NFL history, so the whole suite runs in
+well under a second with no network or cache dependency. This catches
+regressions automatically instead of relying on a fresh manual
+verification script for every change, which is how every fix in this
+project was checked before the suite existed. It's a unit suite, not a
+substitute for `backtest.py` - accuracy claims are still validated there,
+against real games.
+
 ## Run the weekly report from the terminal
 
 ```bash
