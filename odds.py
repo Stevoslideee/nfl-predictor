@@ -71,7 +71,18 @@ def _load_env_file() -> None:
 
 def get_api_key() -> str | None:
     _load_env_file()
-    return os.environ.get("ODDS_API_KEY")
+    key = os.environ.get("ODDS_API_KEY")
+    if key:
+        return key
+    # Streamlit Community Cloud has no .env file - secrets are set through its own
+    # dashboard and read via st.secrets, not always mirrored into os.environ. Falling
+    # back to it here means the same code works unmodified locally and once deployed.
+    try:
+        import streamlit as st
+
+        return st.secrets.get("ODDS_API_KEY")
+    except Exception:
+        return None
 
 
 def american_to_prob(price: int) -> float:

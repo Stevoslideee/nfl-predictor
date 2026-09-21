@@ -157,6 +157,37 @@ The app has three tabs:
   shows what the model called against what actually happened, scored fairly
   using only the data available before each week's kickoff.
 
+## Deploy to Streamlit Community Cloud
+
+Runs locally by default (above), but Streamlit's free Community Cloud
+hosting will keep it always-on and reachable from your phone. This repo
+is already set up for it - `.env` and `cache/` are gitignored (never
+pushed), and `odds.py` reads the API key from Streamlit's own secrets
+manager when a local `.env` isn't present, so no code changes are needed
+either way.
+
+1. Push this repo to GitHub (create a new repo at
+   [github.com/new](https://github.com/new), public or private, then
+   from this folder):
+   ```bash
+   git remote add origin https://github.com/<your-username>/<repo-name>.git
+   git push -u origin master
+   ```
+2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in
+   with your GitHub account.
+3. Click "New app", pick this repo/branch, and set the main file path to
+   `app.py`.
+4. If you use live odds, add your key under the app's **Settings → Secrets**
+   (not `.env` - that file never leaves your machine) as:
+   ```toml
+   ODDS_API_KEY = "your_key_here"
+   ```
+5. Deploy. First load will be slow (it has to fetch and cache NFL data
+   fresh, same as a local first run) - after that it's fast.
+
+Community Cloud apps sleep after a period of inactivity and wake on the
+next visit (a ~30-second cold start), which is normal for the free tier.
+
 ## Run the backtest
 
 ```bash
