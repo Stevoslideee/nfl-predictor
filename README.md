@@ -216,8 +216,13 @@ table - useful for scripting or a quick terminal check without opening the app.
 - **`props.py`** - "will this player clear N yards" probabilities for the
   Matchup Predictor's top QB/RB/WR/TE. Fits a normal distribution to the
   player's own trailing game log (real mean and variance, not assumed),
-  then shifts that mean by how much more or less than league-average the
-  specific upcoming opponent has allowed in that stat recently (derived
+  blending in the real league-wide variance for that stat/position
+  (`population_std()`) when a player has too little history of their own
+  to trust their own sample variance - a rookie's first start or a new
+  starter isn't hidden, but also isn't given a wildly overconfident number
+  built on one data point. Then shifts that mean by how much more or less
+  than league-average the specific upcoming opponent has allowed in that
+  stat recently (derived
   from `data.defense_allowed_view()` - nflverse has no direct "yards
   allowed" field, but a team's defense-allowed stats are just its
   opponents' own offensive output in those games). This is a standard
@@ -251,9 +256,14 @@ table - useful for scripting or a quick terminal check without opening the app.
   can't distinguish "totally calm" from "breezy but not disruptive."
 - No last-minute lineup news beyond the official injury report (a
   surprise inactive announced an hour before kickoff won't be reflected).
-- Player prop probabilities are a normal-distribution approximation over a
-  small sample (5 games), not yet backtested for calibration - useful as
-  directional context, not a precise forecast.
+- Player prop probabilities are a normal-distribution approximation, not yet
+  backtested for calibration - useful as directional context, not a precise
+  forecast. With fewer than a few games of their own history (a rookie's
+  first start, a new starter), a player's variance is blended toward the
+  real league-wide variance for that stat/position (see `props.py`) so the
+  estimate doesn't rely on an unreliable small sample alone - it still
+  fades to almost pure self-history once a player has a full trailing
+  window of games.
 - The full-context model (65.0% backtested accuracy) is close to but still
   short of sportsbook closing lines (65-67%) - expected, since the market
   prices in information (beat writers, practice reports, weather calls

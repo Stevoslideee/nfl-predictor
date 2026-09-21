@@ -347,37 +347,53 @@ def predict_matchup(
         def _name(player: dict | None) -> str | None:
             return player["player_name"] if player else None
 
+        # Real league-wide game-to-game variance per position/stat, used to steady a
+        # player's own estimate when they don't have enough games of their own history
+        # to trust their own variance (see props.population_std).
+        qb_pop_std = props_mod.population_std(weekly_hist, "QB", "passing_yards")
+        rb_pop_std = props_mod.population_std(weekly_hist, "RB", "rushing_yards")
+        wr_pop_std = props_mod.population_std(weekly_hist, "WR", "receiving_yards")
+        te_pop_std = props_mod.population_std(weekly_hist, "TE", "receiving_yards")
+
         home_qb_prop = props_mod.prop_over_probability(
             home_hist, effective_home_qb.get("player_name"), "passing_yards", QB_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, away_team, "passing_yards_allowed"),
+            population_std=qb_pop_std,
         )
         away_qb_prop = props_mod.prop_over_probability(
             away_hist, effective_away_qb.get("player_name"), "passing_yards", QB_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, home_team, "passing_yards_allowed"),
+            population_std=qb_pop_std,
         )
         home_rb_prop = props_mod.prop_over_probability(
             home_hist, _name(home_snapshot["rb"]), "rushing_yards", RB_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, away_team, "rushing_yards_allowed"),
+            population_std=rb_pop_std,
         )
         away_rb_prop = props_mod.prop_over_probability(
             away_hist, _name(away_snapshot["rb"]), "rushing_yards", RB_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, home_team, "rushing_yards_allowed"),
+            population_std=rb_pop_std,
         )
         home_wr_prop = props_mod.prop_over_probability(
             home_hist, _name(home_snapshot["wr"]), "receiving_yards", WR_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, away_team, "receiving_yards_allowed"),
+            population_std=wr_pop_std,
         )
         away_wr_prop = props_mod.prop_over_probability(
             away_hist, _name(away_snapshot["wr"]), "receiving_yards", WR_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_yards_allowed"),
+            population_std=wr_pop_std,
         )
         home_te_prop = props_mod.prop_over_probability(
             home_hist, _name(home_snapshot["te"]), "receiving_yards", TE_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, away_team, "receiving_yards_allowed"),
+            population_std=te_pop_std,
         )
         away_te_prop = props_mod.prop_over_probability(
             away_hist, _name(away_snapshot["te"]), "receiving_yards", TE_PROP_YARDS,
             factor=props_mod.matchup_factor(defense_hist, home_team, "receiving_yards_allowed"),
+            population_std=te_pop_std,
         )
 
     return MatchupPrediction(
