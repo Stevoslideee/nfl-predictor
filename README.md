@@ -100,6 +100,16 @@ API key (500 requests/month) from [the-odds-api.com](https://the-odds-api.com/):
 Without a key, everything else still works - that section just shows a
 reminder instead of odds. The key is only ever sent to The Odds API itself.
 
+When odds are available for a matchup, the Market comparison section also
+shows a **Blended** number - a simple 50/50 average of the model's
+probability and the market's. This is the one number in the whole app that
+isn't backtested: The Odds API only exposes live/current odds, with no
+historical archive to replay games against the way `backtest.py` does for
+everything else, so there's no honest way to validate that 50/50 is the
+right weight (versus, say, 70/30 toward the market, which is known to
+out-predict any public model). It's shown as a clearly-labeled, directional
+reference - not a calibrated probability like the model's own number.
+
 ## Setup
 
 Already done once, but if you need to redo it:

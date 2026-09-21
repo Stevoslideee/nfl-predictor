@@ -211,10 +211,19 @@ with predict_tab:
                     )
                     st.markdown(f"{market_line} (from {match['num_books']} sportsbooks).")
 
-                    mc1, mc2, mc3 = st.columns(3)
+                    blended_pct = odds_mod.blended_probability(pred.home_win_prob, match["home_win_prob"]) * 100
+
+                    mc1, mc2, mc3, mc4 = st.columns(4)
                     mc1.metric(f"Model: {home_team} win%", f"{prob_pct:.0f}%")
                     mc2.metric(f"Market: {home_team} win%", f"{market_pct:.0f}%", f"{match['num_books']} books")
                     mc3.metric("Model vs. market", f"{edge:+.0f} pts")
+                    mc4.metric(f"Blended (untested): {home_team} win%", f"{blended_pct:.0f}%")
+                    st.caption(
+                        "Blended is a simple 50/50 average of model and market, shown for "
+                        "reference - unlike everything else here, this weighting isn't "
+                        "backtested (The Odds API has no historical archive to validate "
+                        "against). Treat it as directional, not a calibrated number."
+                    )
                     if winner != k_team:
                         st.caption(f"⚠️ Model and market disagree on the winner ({winner} vs. {k_team}) — check the injury report.")
                     elif abs(edge) >= 8:

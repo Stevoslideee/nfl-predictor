@@ -158,3 +158,19 @@ def find_matchup(games: list[dict], home_team: str, away_team: str) -> dict | No
         if {g["home_team"], g["away_team"]} == wanted:
             return g
     return None
+
+
+def blended_probability(model_prob: float, market_prob: float) -> float:
+    """A simple, even average of the model's own win probability and the market's
+    devigged implied probability - shown as an additional, clearly-labeled number, not
+    a replacement for either.
+
+    Unlike every other adjustment in this project, this weight (50/50) is NOT backtested
+    against real history: The Odds API only exposes live/current odds, with no historical
+    archive to replay games against the way backtest.py does for everything else. A
+    market-weighted blend is well-motivated in principle (markets aggregate information -
+    beat writers, injury news, sharp money - a public model has no access to), but the
+    specific 50/50 split here is a reasonable default, not a validated one. Treat it as
+    directional, same as the prop probabilities.
+    """
+    return (model_prob + market_prob) / 2
