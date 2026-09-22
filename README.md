@@ -326,10 +326,13 @@ venv\Scripts\python -m pytest tests/ -v
 ```
 
 Unit tests for the model logic (Elo math, the QB-form tenure weighting,
-prop-probability shrinkage, starter identification) - all on small,
-hand-built data rather than real NFL history, so the whole suite runs in
-well under a second with no network or cache dependency. This catches
-regressions automatically instead of relying on a fresh manual
+prop-probability shrinkage, starter identification) and for
+`daily_update.py`'s notification logic (fires once per fully-graded week,
+never re-fires, retries on a failed send rather than marking it done) -
+all on small, hand-built data or fully mocked dependencies rather than
+real NFL history or a real PowerShell call, so the whole suite runs in
+well under a second with no network, cache, or display dependency. This
+catches regressions automatically instead of relying on a fresh manual
 verification script for every change, which is how every fix in this
 project was checked before the suite existed. It's a unit suite, not a
 substitute for `backtest.py` - accuracy claims are still validated there,
