@@ -201,6 +201,45 @@ changing the model. Pass `--skip-context` to compare only plain Elo vs.
 Elo + QB form (faster - skips loading injury data and computing the
 injury/rest/division/weather variant).
 
+## Live prediction tracking
+
+`backtest.py` answers "how accurate is the model on history." `tracking.py`
+answers "how is it actually doing, live, right now" - including a kind of
+mistake pure win/loss accuracy can't see. A real week 2, 2026 game (LA vs.
+NYG) showed the model call the winner correctly while assuming the wrong
+starting QB (it expected J.Dart; J.Winston actually started, with no
+injury designation ever flagging the change - checked three separate data
+sources, including official depth charts, and none of them reflected the
+real decision even the day after the game). No amount of "smarter" math
+fixes that; it's a personnel problem, not a calibration problem. Tracking
+makes it measurable instead of anecdotal.
+
+Every real prediction made from the Weekly Report tab (or `weekly_report.py`)
+is logged to `predictions/log.jsonl` (gitignored - it's your own running
+history, not reproducible source, and grows continuously). Once a logged
+game's real result comes in:
+
+```bash
+venv\Scripts\python tracking.py
+```
+
+grades it automatically: winner/margin accuracy (the live counterpart to
+`backtest.py`'s historical numbers), and, per position, whether the
+assumed starter/featured player actually was the real leader in that stat
+that game - a prop is marked "personnel mismatch" rather than silently
+graded wrong when the assumed player wasn't the one who actually played
+that role. The same view is available in the app under the Weekly Report
+tab's "Live tracking record" section.
+
+**First real batch (2026 week 2, 16 games):** 62.5% winner accuracy (in
+line with the ~64% backtested expectation for one week's worth of noise),
+but only 55.5% personnel-assumption accuracy overall - and that number
+hides a much more interesting split: the assumed **QB** was right in 14
+of 16 games, but the assumed **WR** leader was right in only 2 of 16.
+Real, quantified confirmation that who starts at QB is highly stable
+week-to-week, while who leads a team in receiving yards genuinely isn't -
+useful context for how much to trust a WR yardage prop versus a QB one.
+
 ## Run the tests
 
 ```bash
@@ -296,6 +335,10 @@ table - useful for scripting or a quick terminal check without opening the app.
 - **`backtest.py`** - replays history to measure real accuracy instead of
   assuming it, comparing plain Elo, Elo + QB form, and the full
   context-adjusted model side by side.
+- **`tracking.py`** - logs every real prediction (Weekly Report tab/CLI) and
+  grades it once the real game finishes: winner/margin accuracy, plus
+  whether the assumed starter/featured player at each position actually
+  was the real leader in that stat - see "Live prediction tracking" above.
 - **`weekly_report.py`** - the model-vs-market comparison for a whole week's
   slate at once, shared by the Weekly Report tab and the standalone CLI.
 - **`live.py`** - live/final scores and box scores from ESPN's public

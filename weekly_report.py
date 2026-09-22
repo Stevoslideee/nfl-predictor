@@ -9,6 +9,7 @@ import datetime as dt
 
 import live
 import odds as odds_mod
+import tracking
 from data import load_injuries, load_schedules, load_weekly_player_stats
 from predict import MatchupPrediction, elo_state_as_of, predict_matchup, prefetch_weather_for_matchups, weekly_hist_as_of
 
@@ -148,6 +149,7 @@ def main():
         )
         match = odds_mod.find_matchup(market_games, home, away)
         row = build_report_row(pred, home, away, match)
+        tracking.log_prediction(pred, season, week)
 
         print(row["Matchup"])
         print(f"  Predicted winner: {row['Predicted winner']}  ({row['Confidence']})")

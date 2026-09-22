@@ -9,6 +9,7 @@ import injuries as injuries_mod
 import live
 import odds as odds_mod
 import player_stats
+import tracking
 from data import load_injuries, load_schedules, load_team_weekly_stats, load_weekly_player_stats
 from predict import (
     RB_REC_THRESHOLD,
@@ -508,6 +509,7 @@ with week_tab:
                 )
                 match = odds_mod.find_matchup(market_games, home, away)
                 rows.append(build_report_row(pred, home, away, match))
+                tracking.log_prediction(pred, int(wk_season), int(wk_week))
                 progress.progress((i + 1) / len(report_games), text=f"Running predictions... {g['away_team']} @ {g['home_team']}")
             progress.empty()
 
@@ -568,3 +570,47 @@ with week_tab:
                     f"{correct}/{len(played)} correct ({correct / len(played):.0%}) on games played so far "
                     f"this season - each scored using only the data available before that week's kickoff."
                 )
+
+    st.divider()
+    st.markdown("**Live tracking record**")
+    st.caption(
+        "Every real prediction made from this tab (or the weekly_report.py CLI) gets logged, then "
+        "graded automatically once the real game finishes - including whether the assumed starter/"
+        "featured player actually played that role, not just win/loss accuracy. See tracking.py."
+    )
+
+    if st.button("Show live tracking record"):
+        st.session_state.show_tracking = True
+
+    if st.session_state.get("show_tracking"):
+        graded = tracking.grade_log(schedules, weekly)
+        if not graded:
+            st.info("No logged predictions have a completed real game to grade yet - run a weekly report for a real week, then check back after those games finish.")
+        else:
+            track_rows = []
+            for g in sorted(graded, key=lambda g: (g["season"], g["week"])):
+                mismatches = [k for k, ok in g["personnel_checks"].items() if not ok]
+                track_rows.append(
+                    {
+                        "Matchup": f"{g['away_team']} @ {g['home_team']} (S{g['season']} W{g['week']})",
+                        "Called": f"{g['predicted_winner']} ({g['home_win_prob']:.0%} home)",
+                        "Result": "Correct" if g["winner_correct"] else "Missed",
+                        "Margin (proj vs actual)": f"{g['projected_margin']:+.1f} vs {g['actual_margin']:+.0f}",
+                        "Personnel mismatches": ", ".join(mismatches) if mismatches else "-",
+                    }
+                )
+            st.dataframe(pd.DataFrame(track_rows), hide_index=True, width='stretch')
+
+            summary = tracking.summarize(graded)
+            st.caption(
+                f"{summary['games']} graded games - winner accuracy {summary['accuracy']:.0%}, "
+                f"Brier {summary['brier']:.4f}, mean margin error {summary['mean_margin_error']:.1f} pts."
+            )
+            if summary["personnel_assumption_accuracy"] is not None:
+                st.caption(
+                    f"Personnel-assumption accuracy: {summary['personnel_assumption_accuracy']:.0%} "
+                    f"({summary['personnel_checks_total']} player-role checks) - how often the assumed "
+                    f"starter/leader actually was one, per real box scores."
+                )
+            if summary["prop_hit_rate"] is not None:
+                st.caption(f"Prop hit rate: {summary['prop_hit_rate']:.0%} (of {summary['props_graded']} gradable props - personnel mismatches excluded).")
