@@ -78,6 +78,33 @@ def get_defense_hist_cached(season, week):
     return defense_hist_as_of(team_stats, season, week)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_live_injuries_cached(game_id):
+    return live.get_injuries(game_id)
+
+
+def build_live_injury_lookup(season, week, home_team, away_team):
+    """A live_injury_lookup callable for predict_matchup, sourced from ESPN's feed
+    (fresher than the cached weekly report - see predict.predict_matchup's docstring)
+    when this exact matchup is findable there. Falls back to None (no override) for a
+    hypothetical, far-future, or long-past matchup ESPN doesn't have live data for -
+    predict_matchup then just uses the cached weekly injury report, same as before this
+    existed."""
+    scoreboard = get_scoreboard_cached(int(week), int(season))
+    game_id = live.find_game_id(scoreboard["games"], home_team, away_team)
+    if game_id is None:
+        return None
+    injuries_by_team = get_live_injuries_cached(game_id)
+    if not injuries_by_team:
+        return None
+
+    def lookup(team, qb_name):
+        report = injuries_by_team.get(team)
+        return injuries_mod.starting_qb_status(report, qb_name) if report is not None else None
+
+    return lookup
+
+
 try:
     schedules, weekly, teams = get_history()
     injuries_df = get_injuries()
@@ -150,9 +177,11 @@ with predict_tab:
         elo_state = get_elo_state_cached(int(season), int(week))
         weekly_hist = get_weekly_hist_cached(int(season), int(week))
         defense_hist = get_defense_hist_cached(int(season), int(week))
+        live_lookup = build_live_injury_lookup(season, week, home_team, away_team)
         pred = predict_matchup(
             schedules, weekly, home_team, away_team, int(season), int(week),
             injuries=injuries_df, elo_state=elo_state, weekly_hist=weekly_hist, defense_hist=defense_hist,
+            live_injury_lookup=live_lookup,
         )
 
         st.subheader(f"{away_team} @ {home_team}")
@@ -503,9 +532,11 @@ with week_tab:
             progress = st.progress(0.0, text="Running predictions...")
             for i, g in enumerate(report_games):
                 home, away = g["home_team"], g["away_team"]
+                live_lookup = build_live_injury_lookup(wk_season, wk_week, home, away)
                 pred = predict_matchup(
                     schedules, weekly, home, away, int(wk_season), int(wk_week),
                     injuries=injuries_df, elo_state=week_elo_state, weekly_hist=week_weekly_hist,
+                    live_injury_lookup=live_lookup,
                 )
                 match = odds_mod.find_matchup(market_games, home, away)
                 rows.append(build_report_row(pred, home, away, match))

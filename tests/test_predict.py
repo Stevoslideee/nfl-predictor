@@ -1,12 +1,22 @@
+import pandas as pd
+
 import player_stats
+from conftest import qb_row, weekly_df
+from elo import EloState
 from predict import (
     MAX_QB_ELO_ADJUSTMENT,
     MAX_REST_ADJUSTMENT,
     divisional_dampening_factor,
+    predict_matchup,
     qb_elo_adjustment,
     rest_elo_adjustment,
     weather_dampening_factor,
 )
+
+EMPTY_SCHEDULE_COLUMNS = [
+    "game_id", "season", "week", "home_team", "away_team", "home_score", "away_score",
+    "gameday", "div_game", "home_rest", "away_rest", "roof", "temp", "wind",
+]
 
 
 def _qb_form(rating, tenure):
@@ -92,3 +102,50 @@ def test_weather_dampening_factor_combines_both():
 
 def test_weather_dampening_factor_none_values_ignored():
     assert weather_dampening_factor(None, None) == 1.0
+
+
+def _established_qb_weekly(name, team, n_games=5):
+    return [
+        qb_row(name, team, 2024, w, completions=20, attempts=30, passing_yards=250, passing_tds=2, interceptions=1)
+        for w in range(1, n_games + 1)
+    ]
+
+
+def test_predict_matchup_without_live_lookup_uses_cached_injuries_only():
+    weekly = weekly_df(_established_qb_weekly("A.QB", "AAA") + _established_qb_weekly("B.QB", "BBB"))
+    schedules = pd.DataFrame(columns=EMPTY_SCHEDULE_COLUMNS)
+    pred = predict_matchup(schedules, weekly, "AAA", "BBB", 2024, 6, elo_state=EloState())
+    assert pred.home_qb_status is None  # no injuries DataFrame, no live lookup - nothing to report
+    assert pred.home_qb["player_name"] == "A.QB"
+
+
+def test_predict_matchup_live_lookup_overrides_status_and_triggers_backup_swap():
+    weekly = weekly_df(_established_qb_weekly("A.QB", "AAA") + _established_qb_weekly("B.QB", "BBB"))
+    schedules = pd.DataFrame(columns=EMPTY_SCHEDULE_COLUMNS)
+
+    def lookup(team, qb_name):
+        return "Out" if team == "AAA" else None
+
+    pred = predict_matchup(schedules, weekly, "AAA", "BBB", 2024, 6, elo_state=EloState(), live_injury_lookup=lookup)
+    assert pred.home_qb_status == "Out"
+    # no backup logged for AAA in this fixture, so it should fall back to a neutral QB
+    # and say so - the important thing is the live status was actually used at all
+    assert pred.home_qb["player_name"] is None
+    assert "A.QB is out" in pred.home_qb_note
+
+
+def test_predict_matchup_live_lookup_returning_none_keeps_cached_status():
+    weekly = weekly_df(_established_qb_weekly("A.QB", "AAA") + _established_qb_weekly("B.QB", "BBB"))
+    schedules = pd.DataFrame(columns=EMPTY_SCHEDULE_COLUMNS)
+
+    calls = []
+
+    def lookup(team, qb_name):
+        calls.append((team, qb_name))
+        return None  # "no fresher info" - must not overwrite anything
+
+    pred = predict_matchup(schedules, weekly, "AAA", "BBB", 2024, 6, elo_state=EloState(), live_injury_lookup=lookup)
+    assert pred.home_qb_status is None
+    assert pred.away_qb_status is None
+    assert ("AAA", "A.QB") in calls
+    assert ("BBB", "B.QB") in calls

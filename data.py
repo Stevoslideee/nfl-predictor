@@ -1,5 +1,6 @@
 """Data loading and local caching for NFL schedules, team results, and player weekly stats."""
 
+import datetime as dt
 import io
 from pathlib import Path
 
@@ -12,15 +13,33 @@ from urllib3.util.retry import Retry
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
+# How stale the CURRENT season's cached file is allowed to get before refetching. Found
+# by hand more than once this session (a cached schedule missing a game's just-final
+# score, a stale weekly-stats file) - a season still in progress keeps gaining new games
+# and updated statuses, unlike a completed one, which never changes again once cached.
+CURRENT_SEASON_CACHE_MAX_AGE = dt.timedelta(hours=6)
+
 
 def _cached_per_season(prefix: str, seasons: list[int], loader) -> pd.DataFrame:
     """Cache one file per season, not per requested range - so a range like 2024-2026
     reuses whatever 2010-2026 (or any other overlapping range) already fetched, instead
-    of re-downloading seasons we already have every time the requested range changes."""
+    of re-downloading seasons we already have every time the requested range changes.
+
+    A season still in progress (this calendar year or later) is refetched once its cache
+    file is older than CURRENT_SEASON_CACHE_MAX_AGE, since it keeps gaining new games and
+    updated statuses; a season that's clearly over is cached forever, since it can't
+    change - this is the common case and stays exactly as cheap as before.
+    """
+    current_year = dt.date.today().year
     frames = []
     for season in seasons:
         path = CACHE_DIR / f"{prefix}_{season}.parquet"
-        if path.exists():
+        is_current = season >= current_year
+        stale = (
+            is_current and path.exists()
+            and dt.datetime.now() - dt.datetime.fromtimestamp(path.stat().st_mtime) > CURRENT_SEASON_CACHE_MAX_AGE
+        )
+        if path.exists() and not stale:
             frames.append(pd.read_parquet(path))
         else:
             df = loader(season)

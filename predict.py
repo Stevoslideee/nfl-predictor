@@ -13,6 +13,7 @@ small and each backtested (see backtest.py) rather than picked arbitrarily:
 """
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -297,7 +298,19 @@ def predict_matchup(
     weekly_hist: pd.DataFrame | None = None,
     team_stats: pd.DataFrame | None = None,
     defense_hist: pd.DataFrame | None = None,
+    live_injury_lookup: Callable[[str, str], str | None] | None = None,
 ) -> MatchupPrediction:
+    """`live_injury_lookup(team, qb_name) -> status | None`, when given, can override
+    the cached weekly injury report's QB designation with a fresher one - the weekly
+    report only updates a few times a week (and data.py's own cache allows up to 6
+    hours of staleness even for the current season), so a same-day status change might
+    not show up there yet. Return None from the lookup for "no fresher info available",
+    not a guess - the cached designation is kept in that case.
+
+    Only ever provide this for a real, current prediction (app.py does, wired to
+    live.get_injuries); backtest.py never does, so historical replays - which need the
+    exact same inputs every time to be comparable - are completely unaffected.
+    """
     if elo_state is None:
         elo_state = elo_state_as_of(schedules, season, week)
     if weekly_hist is None:
@@ -320,6 +333,14 @@ def predict_matchup(
     else:
         home_injuries = away_injuries = pd.DataFrame()
         home_qb_status = away_qb_status = None
+
+    if live_injury_lookup is not None:
+        live_home_status = live_injury_lookup(home_team, home_qb["player_name"])
+        if live_home_status is not None:
+            home_qb_status = live_home_status
+        live_away_status = live_injury_lookup(away_team, away_qb["player_name"])
+        if live_away_status is not None:
+            away_qb_status = live_away_status
 
     effective_home_qb, home_qb_note = _effective_qb(weekly_hist, home_team, home_qb, home_qb_status)
     effective_away_qb, away_qb_note = _effective_qb(weekly_hist, away_team, away_qb, away_qb_status)

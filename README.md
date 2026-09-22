@@ -354,8 +354,13 @@ table - useful for scripting or a quick terminal check without opening the app.
   `import_weekly_data` points at a legacy release that stopped updating after
   the 2024 season). The season range always runs from 2010 through the
   current year, so it automatically picks up new seasons without code
-  changes - just delete `cache/` (or wait for the season number to roll
-  over) to pull fresh data.
+  changes. The current season's cache file refetches on its own once it's
+  more than `CURRENT_SEASON_CACHE_MAX_AGE` (6 hours) old - found by hand
+  more than once this session that a completed game's score or an updated
+  injury designation was missing because the file cached hours or days
+  earlier never refreshed; a fully completed past season still caches
+  forever, since it genuinely can't change. Delete `cache/` to force a
+  full fresh pull of everything regardless.
 - **`elo.py`** - a FiveThirtyEight-style Elo rating: home-field bonus, a
   margin-of-victory multiplier so blowouts move ratings more, and
   between-season regression toward the mean since rosters change. The
@@ -426,7 +431,13 @@ table - useful for scripting or a quick terminal check without opening the app.
 - **`weekly_report.py`** - the model-vs-market comparison for a whole week's
   slate at once, shared by the Weekly Report tab and the standalone CLI.
 - **`live.py`** - live/final scores and box scores from ESPN's public
-  scoreboard feed (no API key needed), for the Live tab.
+  scoreboard feed (no API key needed), for the Live tab. Also exposes a live
+  injury feed (`get_injuries`) that a real, current prediction (the
+  Matchup Predictor tab, the Weekly Report tab, `daily_update.py`) can use
+  to override the cached weekly injury designation with a fresher one -
+  `predict_matchup`'s `live_injury_lookup` parameter, provided only for
+  real predictions and never by `backtest.py`, so historical replays stay
+  exactly reproducible.
 - **`injuries.py`** - official weekly injury report lookups (no API key
   needed) - the QB's status drives the backup-swap in `predict.py`; every
   other injury is still shown as plain context rather than folded into the
@@ -445,8 +456,15 @@ table - useful for scripting or a quick terminal check without opening the app.
 - Weather adjustments only trigger past a threshold (20+ mph wind, 25°F or
   colder) - mild weather is correctly ignored, but this means the model
   can't distinguish "totally calm" from "breezy but not disruptive."
-- No last-minute lineup news beyond the official injury report (a
-  surprise inactive announced an hour before kickoff won't be reflected).
+- Real, current predictions now supplement the cached weekly injury report
+  with ESPN's live feed (fresher, and not limited by `data.py`'s up-to-6-hour
+  cache), but this only helps for a genuine injury-status change - it can't
+  catch a healthy-scratch/depth-chart decision with no injury designation
+  at all, which is exactly what happened in the week 2 2026 LA-vs-NYG game
+  (see "Live prediction tracking" above): checked three separate data
+  sources for that specific case, including official depth charts, and
+  none of them ever reflected the real decision, even the day after the
+  game. Some lineup surprises just aren't in any free structured data.
 - Player prop probabilities are a normal-distribution approximation, not yet
   backtested for calibration - useful as directional context, not a precise
   forecast. With fewer than a few games of their own history (a rookie's

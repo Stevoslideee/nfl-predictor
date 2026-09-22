@@ -18,6 +18,7 @@ import subprocess
 import traceback
 from pathlib import Path
 
+import injuries as injuries_mod
 import live
 import tracking
 from data import load_injuries, load_schedules, load_weekly_player_stats
@@ -58,6 +59,23 @@ def send_toast(title: str, message: str) -> None:
     subprocess.run([PWSH_EXE, "-NoProfile", "-Command", script], check=True, timeout=30, capture_output=True)
 
 
+def _build_live_injury_lookup(game_id: str | None):
+    """Same idea as app.py's build_live_injury_lookup, minus the Streamlit caching (a
+    plain script, no @st.cache_data available) - one real fetch per game per daily run
+    is cheap enough it doesn't need its own cache."""
+    if game_id is None:
+        return None
+    injuries_by_team = live.get_injuries(game_id)
+    if not injuries_by_team:
+        return None
+
+    def lookup(team, qb_name):
+        report = injuries_by_team.get(team)
+        return injuries_mod.starting_qb_status(report, qb_name) if report is not None else None
+
+    return lookup
+
+
 def run(f) -> None:
     scoreboard = live.get_scoreboard(week=None, season=None)
     season, week = scoreboard.get("season"), scoreboard.get("week")
@@ -86,6 +104,7 @@ def run(f) -> None:
             pred = predict_matchup(
                 schedules, weekly, home, away, season, week,
                 injuries=injuries, elo_state=elo_state, weekly_hist=weekly_hist,
+                live_injury_lookup=_build_live_injury_lookup(g.get("game_id")),
             )
             tracking.log_prediction(pred, season, week)
             logged += 1

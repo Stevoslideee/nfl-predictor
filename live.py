@@ -6,6 +6,7 @@ game ends - so this covers both "what's happening right now" and "what just
 happened," complementing the multi-season historical data in data.py.
 """
 
+import pandas as pd
 import requests
 
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
@@ -99,4 +100,51 @@ def get_boxscore(game_id: str) -> dict[str, list[dict]]:
             result[team] = rows
         return result
     except (requests.RequestException, ValueError, KeyError, IndexError):
+        return {}
+
+
+def find_game_id(games: list[dict], home_team: str, away_team: str) -> str | None:
+    """The ESPN game_id for this matchup within a get_scoreboard() games list, or None
+    if it's not on that scoreboard (wrong week, hasn't been scheduled with these exact
+    teams, etc.) - mirrors odds.find_matchup()'s exact-pair matching."""
+    wanted = {home_team, away_team}
+    for g in games:
+        if {g["home_team"], g["away_team"]} == wanted:
+            return g["game_id"]
+    return None
+
+
+def get_injuries(game_id: str) -> dict[str, pd.DataFrame]:
+    """Live per-team injury report for one game, in the same shape as
+    injuries.team_injury_report()'s output (full_name, position,
+    report_primary_injury, report_status) so injuries.starting_qb_status() works
+    unchanged on either source.
+
+    This can be fresher than the cached weekly nflverse injury report - useful for a
+    same-day status change that hasn't made it into the official weekly report yet, or
+    into data.py's cache (which allows up to 6 hours of staleness even for the current
+    season). Returns {} on any failure, same reasoning as get_boxscore.
+    """
+    try:
+        resp = requests.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        result: dict[str, pd.DataFrame] = {}
+        for team_block in data.get("injuries", []):
+            team = normalize_team(team_block["team"]["abbreviation"])
+            rows = []
+            for inj in team_block.get("injuries", []):
+                details = inj.get("details")
+                rows.append(
+                    {
+                        "full_name": inj["athlete"]["fullName"],
+                        "position": inj["athlete"]["position"]["abbreviation"],
+                        "report_primary_injury": details.get("type") if isinstance(details, dict) else None,
+                        "report_status": inj["status"],
+                    }
+                )
+            result[team] = pd.DataFrame(rows, columns=["full_name", "position", "report_primary_injury", "report_status"])
+        return result
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
         return {}
