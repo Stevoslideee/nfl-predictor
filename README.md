@@ -139,6 +139,16 @@ Opens at http://localhost:8501. First run downloads NFL data (schedules and
 weekly player stats since 2010) and caches it locally in `cache/` as parquet
 files, so later runs are fast. Delete `cache/` to force a fresh pull.
 
+**If a change to a file other than `app.py` doesn't seem to take effect:**
+Streamlit's file-watcher reruns `app.py` on save, but doesn't reliably
+re-import an already-imported module it doesn't own (`predict.py`,
+`player_stats.py`, `live.py`, etc.) - edit `data.py` and the app might keep
+using the old version until it's restarted. Stop the server (Ctrl+C) and
+run it again rather than trusting a rerun for anything beyond `app.py`
+itself. The deployed Community Cloud version can hit the same issue after
+a quick succession of pushes - see "Deploy to Streamlit Community Cloud"
+below for the fix there.
+
 The app has three tabs:
 
 - **Matchup Predictor** - pick a real game from the "Quick-pick" dropdown
@@ -197,6 +207,16 @@ either way.
 
 Community Cloud apps sleep after a period of inactivity and wake on the
 next visit (a ~30-second cold start), which is normal for the free tier.
+
+**If the deployed app throws an `AttributeError`/`ImportError` for
+something that clearly exists in the code you just pushed:** Community
+Cloud's auto-redeploy on push can hit the same stale-module-import issue
+as the local dev server (see "Run the app" above) - it reruns `app.py`
+but doesn't always freshly re-import every other module on a quick
+succession of pushes. Fix: **⋮ menu → Reboot app** (in the app's
+management panel) - a full process restart, not just a rerun, forces
+every module to be freshly imported. Hit this once in practice after
+several rapid commits; a reboot fixed it immediately.
 
 ## Run the backtest
 
