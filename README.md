@@ -240,6 +240,32 @@ Real, quantified confirmation that who starts at QB is highly stable
 week-to-week, while who leads a team in receiving yards genuinely isn't -
 useful context for how much to trust a WR yardage prop versus a QB one.
 
+### Running it automatically every day
+
+`daily_update.py` logs the current week's predictions and re-grades
+anything finished, meant to run unattended rather than depending on
+someone remembering to open the app. Re-running daily (not just weekly)
+is deliberate - each entry is timestamped and appended, never overwritten
+(`tracking.log_prediction`), so it also captures how a prediction moved
+as injury news firmed up over the week. Output goes to
+`predictions/daily_run.log` (there's no console to print to when a
+scheduled task runs unattended).
+
+Set up as a Windows Scheduled Task (`schtasks`/Task Scheduler), once
+daily:
+```powershell
+$action = New-ScheduledTaskAction -Execute "<path-to-venv>\Scripts\python.exe" -Argument "daily_update.py" -WorkingDirectory "<path-to-this-project>"
+$trigger = New-ScheduledTaskTrigger -Daily -At 8:00AM
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+Register-ScheduledTask -TaskName "NFL Predictor Daily Update" -Action $action -Trigger $trigger -Settings $settings
+```
+`-StartWhenAvailable` means it catches up on the next login if the PC was
+off at 8am, rather than silently skipping the day. This only runs
+locally (a Streamlit Community Cloud deployment doesn't have a way to
+run a scheduled background job) - if you're using the deployed version,
+run `daily_update.py` locally to keep the tracking record current, or
+just use the Weekly Report tab's button manually.
+
 ## Run the tests
 
 ```bash
@@ -339,6 +365,9 @@ table - useful for scripting or a quick terminal check without opening the app.
   grades it once the real game finishes: winner/margin accuracy, plus
   whether the assumed starter/featured player at each position actually
   was the real leader in that stat - see "Live prediction tracking" above.
+- **`daily_update.py`** - unattended entry point for a Windows Scheduled
+  Task: logs the current week's predictions and re-grades finished ones,
+  once a day, without anyone opening the app.
 - **`weekly_report.py`** - the model-vs-market comparison for a whole week's
   slate at once, shared by the Weekly Report tab and the standalone CLI.
 - **`live.py`** - live/final scores and box scores from ESPN's public
