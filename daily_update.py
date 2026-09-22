@@ -13,6 +13,8 @@ scheduled task has no visible console to print to.
 """
 
 import datetime as dt
+import json
+import subprocess
 import traceback
 from pathlib import Path
 
@@ -22,11 +24,38 @@ from data import load_injuries, load_schedules, load_weekly_player_stats
 from predict import elo_state_as_of, prefetch_weather_for_matchups, predict_matchup, weekly_hist_as_of
 
 LOG_FILE = Path(__file__).parent / "predictions" / "daily_run.log"
+NOTIFIED_WEEKS_PATH = Path(__file__).parent / "predictions" / "notified_weeks.json"
 SEASONS = list(range(2010, dt.date.today().year + 1))
 
 
 def _log(f, message: str) -> None:
     f.write(f"[{dt.datetime.now().isoformat(timespec='seconds')}] {message}\n")
+
+
+def _load_notified_weeks() -> set[tuple]:
+    if not NOTIFIED_WEEKS_PATH.exists():
+        return set()
+    with NOTIFIED_WEEKS_PATH.open(encoding="utf-8") as f:
+        return {tuple(k) for k in json.load(f)}
+
+
+def _save_notified_weeks(weeks: set[tuple]) -> None:
+    with NOTIFIED_WEEKS_PATH.open("w", encoding="utf-8") as f:
+        json.dump([list(k) for k in sorted(weeks)], f)
+
+
+PWSH_EXE = r"C:\Program Files\PowerShell\7\pwsh.exe"  # BurntToast is installed here (CurrentUser scope), not
+# under legacy Windows PowerShell 5.1's separate module path - "powershell" would silently fail to find it.
+
+
+def send_toast(title: str, message: str) -> None:
+    """A Windows desktop notification via the BurntToast PowerShell module - fully
+    local, no external service or credentials needed (unlike email). Escapes single
+    quotes since the message is embedded in a single-quoted PowerShell string."""
+    safe_title = title.replace("'", "''")
+    safe_message = message.replace("'", "''")
+    script = f"Import-Module BurntToast; New-BurntToastNotification -Text '{safe_title}', '{safe_message}'"
+    subprocess.run([PWSH_EXE, "-NoProfile", "-Command", script], check=True, timeout=30, capture_output=True)
 
 
 def run(f) -> None:
@@ -76,6 +105,27 @@ def run(f) -> None:
                 if summary["personnel_assumption_accuracy"] is not None else ""
             ),
         )
+
+    # One notification per week, sent the first time every game in it has a real
+    # graded result - not one per game, since games finish on different days and a
+    # ping after just Thursday's game would be noise ahead of the real weekly picture.
+    week_graded = [g for g in graded if g["season"] == season and g["week"] == week]
+    if week_graded and len(week_graded) == len(games):
+        week_key = (season, week)
+        notified = _load_notified_weeks()
+        if week_key not in notified:
+            week_summary = tracking.summarize(week_graded)
+            message = f"{week_summary['games']}/{len(games)} games graded, {week_summary['accuracy']:.0%} winner accuracy"
+            if week_summary["personnel_assumption_accuracy"] is not None:
+                message += f", {week_summary['personnel_assumption_accuracy']:.0%} personnel accuracy"
+            try:
+                send_toast(f"NFL Predictor - Week {week} graded", message)
+                _log(f, f"Sent notification: {message}")
+            except Exception as e:
+                _log(f, f"Notification failed ({e.__class__.__name__}: {e}) - it'll retry next run.")
+            else:
+                notified.add(week_key)
+                _save_notified_weeks(notified)
 
 
 def main():

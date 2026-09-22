@@ -300,6 +300,24 @@ run a scheduled background job) - if you're using the deployed version,
 run `daily_update.py` locally to keep the tracking record current, or
 just use the Weekly Report tab's button manually.
 
+**Desktop notification when a week finishes grading:** rather than
+having to check in, `daily_update.py` sends a Windows toast notification
+(via the [BurntToast](https://github.com/Windos/BurntToast) PowerShell
+module - `Install-Module -Name BurntToast -Scope CurrentUser`, a one-time
+setup) the first time every game in a week has a real graded result -
+not once per game, since games finish across different days and a ping
+after just Thursday's game would be noise ahead of the real weekly
+picture. Which weeks have already been notified about is tracked in
+`predictions/notified_weeks.json` (gitignored, like the rest of
+`predictions/`), so it fires exactly once per week even though the task
+runs daily. No email/SMS account or credentials needed - fully local.
+If your machine has both Windows PowerShell and PowerShell 7 installed,
+make sure BurntToast is installed under the same one `daily_update.py`
+invokes (`PWSH_EXE` at the top of the file) - they have separate module
+paths, so installing into the wrong one means the notification call
+fails every run (logged to `predictions/daily_run.log`, not silent, but
+easy to miss if you're not checking that file).
+
 ## Run the tests
 
 ```bash
