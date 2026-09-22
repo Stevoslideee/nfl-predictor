@@ -89,12 +89,20 @@ def build_live_injury_lookup(season, week, home_team, away_team):
     when this exact matchup is findable there. Falls back to None (no override) for a
     hypothetical, far-future, or long-past matchup ESPN doesn't have live data for -
     predict_matchup then just uses the cached weekly injury report, same as before this
-    existed."""
+    existed.
+
+    Skips games that are already Final: a live injury feed reflects a team's CURRENT
+    status, which for an already-decided game means "whatever's true heading into their
+    NEXT game" - applying that retroactively would leak future information into a
+    historical prediction (caught this by hand: the live tracking record's Brier score
+    for an already-final week changed between two runs on the same day, which should be
+    impossible for games that can't change anymore).
+    """
     scoreboard = get_scoreboard_cached(int(week), int(season))
-    game_id = live.find_game_id(scoreboard["games"], home_team, away_team)
-    if game_id is None:
+    game = live.find_game(scoreboard["games"], home_team, away_team)
+    if game is None or game.get("status") == "Final":
         return None
-    injuries_by_team = get_live_injuries_cached(game_id)
+    injuries_by_team = get_live_injuries_cached(game["game_id"])
     if not injuries_by_team:
         return None
 
@@ -540,7 +548,10 @@ with week_tab:
                 )
                 match = odds_mod.find_matchup(market_games, home, away)
                 rows.append(build_report_row(pred, home, away, match))
-                tracking.log_prediction(pred, int(wk_season), int(wk_week))
+                tracking.log_prediction(
+                    pred, int(wk_season), int(wk_week),
+                    market_home_win_prob=match["home_win_prob"] if match else None,
+                )
                 progress.progress((i + 1) / len(report_games), text=f"Running predictions... {g['away_team']} @ {g['home_team']}")
             progress.empty()
 
@@ -645,3 +656,17 @@ with week_tab:
                 )
             if summary["prop_hit_rate"] is not None:
                 st.caption(f"Prop hit rate: {summary['prop_hit_rate']:.0%} (of {summary['props_graded']} gradable props - personnel mismatches excluded).")
+
+            if summary["market_games"]:
+                st.markdown("**Model vs. market vs. blend**")
+                st.caption(
+                    f"Over the same {summary['market_games']} games that had a real sportsbook line at "
+                    f"logging time - this is how the 50/50 blend (shown as untested in the Matchup "
+                    f"Predictor, since there's no historical odds archive to backtest it against) gets "
+                    f"validated: not in one shot, but by accumulating real graded weeks over time. Small "
+                    f"sample early on - treat accordingly."
+                )
+                mvm1, mvm2, mvm3 = st.columns(3)
+                mvm1.metric("Model", f"{summary['model_subset_accuracy']:.0%}", f"Brier {summary['model_subset_brier']:.4f}")
+                mvm2.metric("Market", f"{summary['market_accuracy']:.0%}", f"Brier {summary['market_brier']:.4f}")
+                mvm3.metric("Blended", f"{summary['blended_accuracy']:.0%}", f"Brier {summary['blended_brier']:.4f}")

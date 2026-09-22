@@ -103,15 +103,25 @@ def get_boxscore(game_id: str) -> dict[str, list[dict]]:
         return {}
 
 
-def find_game_id(games: list[dict], home_team: str, away_team: str) -> str | None:
-    """The ESPN game_id for this matchup within a get_scoreboard() games list, or None
-    if it's not on that scoreboard (wrong week, hasn't been scheduled with these exact
-    teams, etc.) - mirrors odds.find_matchup()'s exact-pair matching."""
+def find_game(games: list[dict], home_team: str, away_team: str) -> dict | None:
+    """The full game entry for this matchup within a get_scoreboard() games list, or
+    None if it's not on that scoreboard (wrong week, hasn't been scheduled with these
+    exact teams, etc.) - mirrors odds.find_matchup()'s exact-pair matching. Returning
+    the whole entry (not just the id) lets a caller check `status` before deciding
+    whether "live" data even makes sense to use - e.g. a live injury feed reflects a
+    team's CURRENT status, which is meaningless (or actively wrong) to apply to a game
+    that's already final."""
     wanted = {home_team, away_team}
     for g in games:
         if {g["home_team"], g["away_team"]} == wanted:
-            return g["game_id"]
+            return g
     return None
+
+
+def find_game_id(games: list[dict], home_team: str, away_team: str) -> str | None:
+    """The ESPN game_id for this matchup, or None - see find_game()."""
+    game = find_game(games, home_team, away_team)
+    return game["game_id"] if game else None
 
 
 def get_injuries(game_id: str) -> dict[str, pd.DataFrame]:

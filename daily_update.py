@@ -20,6 +20,7 @@ from pathlib import Path
 
 import injuries as injuries_mod
 import live
+import odds as odds_mod
 import tracking
 from data import load_injuries, load_schedules, load_weekly_player_stats
 from predict import elo_state_as_of, prefetch_weather_for_matchups, predict_matchup, weekly_hist_as_of
@@ -59,11 +60,19 @@ def send_toast(title: str, message: str) -> None:
     subprocess.run([PWSH_EXE, "-NoProfile", "-Command", script], check=True, timeout=30, capture_output=True)
 
 
-def _build_live_injury_lookup(game_id: str | None):
+def _build_live_injury_lookup(game: dict):
     """Same idea as app.py's build_live_injury_lookup, minus the Streamlit caching (a
     plain script, no @st.cache_data available) - one real fetch per game per daily run
-    is cheap enough it doesn't need its own cache."""
-    if game_id is None:
+    is cheap enough it doesn't need its own cache.
+
+    Skips a game that's already Final - see app.py's build_live_injury_lookup for why
+    (a live feed reflects a team's CURRENT status, not their status before a game
+    that's already been decided; applying it retroactively leaked future information
+    into an already-final week's tracked prediction, caught by hand when the live
+    tracking record's Brier score for week 2 changed between two same-day runs).
+    """
+    game_id = game.get("game_id")
+    if game_id is None or game.get("status") == "Final":
         return None
     injuries_by_team = live.get_injuries(game_id)
     if not injuries_by_team:
@@ -97,6 +106,12 @@ def run(f) -> None:
     matchups = [(g["home_team"], g["away_team"]) for g in games]
     prefetch_weather_for_matchups(schedules, matchups, season, week)
 
+    try:
+        market_games = odds_mod.fetch_odds()
+    except odds_mod.OddsApiError as e:
+        _log(f, f"No odds available ({e}) - logging model-only predictions.")
+        market_games = []
+
     logged = 0
     for g in games:
         home, away = g["home_team"], g["away_team"]
@@ -104,9 +119,10 @@ def run(f) -> None:
             pred = predict_matchup(
                 schedules, weekly, home, away, season, week,
                 injuries=injuries, elo_state=elo_state, weekly_hist=weekly_hist,
-                live_injury_lookup=_build_live_injury_lookup(g.get("game_id")),
+                live_injury_lookup=_build_live_injury_lookup(g),
             )
-            tracking.log_prediction(pred, season, week)
+            match = odds_mod.find_matchup(market_games, home, away)
+            tracking.log_prediction(pred, season, week, market_home_win_prob=match["home_win_prob"] if match else None)
             logged += 1
         except Exception as e:
             _log(f, f"  Failed to predict/log {away} @ {home}: {e.__class__.__name__}: {e}")

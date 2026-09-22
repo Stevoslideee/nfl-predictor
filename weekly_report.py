@@ -149,7 +149,7 @@ def main():
         )
         match = odds_mod.find_matchup(market_games, home, away)
         row = build_report_row(pred, home, away, match)
-        tracking.log_prediction(pred, season, week)
+        tracking.log_prediction(pred, season, week, market_home_win_prob=match["home_win_prob"] if match else None)
 
         print(row["Matchup"])
         print(f"  Predicted winner: {row['Predicted winner']}  ({row['Confidence']})")

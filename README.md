@@ -110,6 +110,16 @@ right weight (versus, say, 70/30 toward the market, which is known to
 out-predict any public model). It's shown as a clearly-labeled, directional
 reference - not a calibrated probability like the model's own number.
 
+Since it can't be backtested, it's validated the other way instead: every
+real prediction with a market line attached is logged (`market_home_win_prob`
+in `tracking.py`'s log), and once graded, the "Live tracking record" section
+shows the model's, the market's, and the blend's actual accuracy and Brier
+score side by side, over the same real games. That comparison starts out on
+a small sample (only real, current-week games ever have odds attached) and
+grows every week the daily automation runs - the honest way to find out
+whether 50/50 was ever the right call, using real results instead of a
+one-time guess.
+
 ## Setup
 
 Already done once, but if you need to redo it:
@@ -424,7 +434,11 @@ table - useful for scripting or a quick terminal check without opening the app.
 - **`tracking.py`** - logs every real prediction (Weekly Report tab/CLI) and
   grades it once the real game finishes: winner/margin accuracy, plus
   whether the assumed starter/featured player at each position actually
-  was the real leader in that stat - see "Live prediction tracking" above.
+  was the real leader in that stat, plus - for the subset of games that had
+  a real sportsbook line - the model's, market's, and 50/50 blend's
+  accuracy side by side, so the blend (untested by design, since there's
+  no historical odds archive) gets validated empirically over time instead
+  of staying untested forever. See "Live prediction tracking" above.
 - **`daily_update.py`** - unattended entry point for a Windows Scheduled
   Task: logs the current week's predictions and re-grades finished ones,
   once a day, without anyone opening the app.

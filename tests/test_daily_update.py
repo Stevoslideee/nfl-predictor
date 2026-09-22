@@ -37,6 +37,8 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(daily_update, "load_schedules", lambda seasons: "schedules")
     monkeypatch.setattr(daily_update, "load_weekly_player_stats", lambda seasons: "weekly")
     monkeypatch.setattr(daily_update, "load_injuries", lambda seasons: "injuries")
+    monkeypatch.setattr(daily_update.odds_mod, "fetch_odds", lambda: [])
+    monkeypatch.setattr(daily_update.odds_mod, "find_matchup", lambda games, home, away: None)
     monkeypatch.setattr(daily_update, "elo_state_as_of", lambda *a, **k: "elo_state")
     monkeypatch.setattr(daily_update, "weekly_hist_as_of", lambda *a, **k: "weekly_hist")
     monkeypatch.setattr(daily_update, "prefetch_weather_for_matchups", lambda *a, **k: None)
@@ -162,3 +164,34 @@ def test_load_and_save_notified_weeks_round_trip(tmp_path, monkeypatch):
 
     daily_update._save_notified_weeks({(2026, 1), (2026, 2)})
     assert daily_update._load_notified_weeks() == {(2026, 1), (2026, 2)}
+
+
+def test_build_live_injury_lookup_skips_already_final_games(monkeypatch):
+    # regression test: a live injury feed reflects a team's CURRENT status, which for
+    # an already-decided game means "whatever's true heading into their NEXT game" -
+    # applying that retroactively leaked future information into an already-final
+    # week's tracked prediction (caught by hand: the live tracking record's Brier
+    # score for week 2 changed between two same-day runs, which should be impossible)
+    calls = []
+    monkeypatch.setattr(daily_update.live, "get_injuries", lambda game_id: calls.append(game_id) or {"AAA": None})
+
+    final_game = {"game_id": "123", "status": "Final"}
+    assert daily_update._build_live_injury_lookup(final_game) is None
+    assert calls == []  # must not even fetch - the game can't change anymore
+
+
+def test_build_live_injury_lookup_works_for_a_not_yet_final_game(monkeypatch):
+    import pandas as pd
+
+    report = pd.DataFrame([{"full_name": "Jaxson Dart", "position": "QB", "report_primary_injury": None, "report_status": "Out"}])
+    monkeypatch.setattr(daily_update.live, "get_injuries", lambda game_id: {"NYG": report})
+
+    scheduled_game = {"game_id": "123", "status": "Scheduled"}
+    lookup = daily_update._build_live_injury_lookup(scheduled_game)
+    assert lookup is not None
+    assert lookup("NYG", "J.Dart") == "Out"
+    assert lookup("NYG", "SomeoneElse") is None
+
+
+def test_build_live_injury_lookup_no_game_id_returns_none():
+    assert daily_update._build_live_injury_lookup({"status": "Scheduled"}) is None

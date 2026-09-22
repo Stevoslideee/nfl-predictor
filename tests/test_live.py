@@ -12,6 +12,17 @@ def test_find_game_id_no_match_returns_none():
     assert live.find_game_id(games, "KC", "LA") is None
 
 
+def test_find_game_returns_full_entry_including_status():
+    games = [{"game_id": "1", "home_team": "BUF", "away_team": "MIA", "status": "Final"}]
+    game = live.find_game(games, "BUF", "MIA")
+    assert game["status"] == "Final"
+    assert game["game_id"] == "1"
+
+
+def test_find_game_no_match_returns_none():
+    assert live.find_game([{"game_id": "1", "home_team": "BUF", "away_team": "MIA"}], "KC", "LA") is None
+
+
 class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload

@@ -148,3 +148,64 @@ def test_summarize_aggregates():
     assert abs(summary["personnel_assumption_accuracy"] - (2 / 3)) < 1e-9
     assert summary["props_graded"] == 2  # the N/A entry is excluded
     assert summary["prop_hit_rate"] == 0.5
+    assert summary["market_games"] == 0  # neither row has market data
+    assert summary["market_accuracy"] is None
+
+
+def test_log_prediction_stores_market_and_blended_probability():
+    tracking.log_prediction(_pred(home_win_prob=0.7), season=2026, week=2, market_home_win_prob=0.5)
+    record = tracking.load_log()[0]
+    assert record["market_home_win_prob"] == 0.5
+    assert record["blended_home_win_prob"] == 0.6  # (0.7 + 0.5) / 2
+
+
+def test_log_prediction_without_market_data_stores_none():
+    tracking.log_prediction(_pred(), season=2026, week=2)
+    record = tracking.load_log()[0]
+    assert record["market_home_win_prob"] is None
+    assert record["blended_home_win_prob"] is None
+
+
+def test_grade_log_carries_market_and_blended_probability_through():
+    tracking.log_prediction(_pred(home_win_prob=0.72), season=2026, week=2, market_home_win_prob=0.6)
+    weekly = pd.DataFrame([
+        _weekly_row("M.Stafford", "QB", "LA", attempts=31, passing_yards=327),
+        _weekly_row("K.Williams", "RB", "LA", rushing_yards=85),
+        _weekly_row("P.Nacua", "WR", "LA", receiving_yards=100),
+        _weekly_row("C.Parkinson", "TE", "LA", receiving_yards=15),
+        _weekly_row("J.Dart", "QB", "NYG", attempts=27, passing_yards=200),
+        _weekly_row("T.Tracy", "RB", "NYG", rushing_yards=40),
+        _weekly_row("M.Nabers", "WR", "NYG", receiving_yards=50),
+        _weekly_row("I.Likely", "TE", "NYG", receiving_yards=30),
+    ])
+    graded = tracking.grade_log(_schedule_row(), weekly)
+    assert len(graded) == 1
+    assert graded[0]["market_home_win_prob"] == 0.6
+    assert abs(graded[0]["blended_home_win_prob"] - 0.66) < 1e-9  # (0.72 + 0.6) / 2
+
+
+def test_summarize_computes_fair_model_market_blend_comparison_on_shared_subset():
+    # game 1 has market data; game 2 doesn't - the market/blend comparison must only use
+    # game 1, and the model's own accuracy in that comparison must ALSO be restricted to
+    # game 1 (not silently computed over both games), so all three numbers are apples-to-apples
+    graded = [
+        {
+            "winner_correct": True, "home_win_prob": 0.7, "home_team": "LA", "actual_winner": "LA",
+            "margin_error": 5.0, "personnel_checks": {}, "prop_grades": {},
+            "market_home_win_prob": 0.5, "blended_home_win_prob": 0.6,
+        },
+        {
+            "winner_correct": False, "home_win_prob": 0.6, "home_team": "SF", "actual_winner": "MIA",
+            "margin_error": 10.0, "personnel_checks": {}, "prop_grades": {},
+            "market_home_win_prob": None, "blended_home_win_prob": None,
+        },
+    ]
+    summary = tracking.summarize(graded)
+    assert summary["market_games"] == 1
+    # model's overall accuracy (both games): 1/2 correct = 50%
+    assert summary["accuracy"] == 0.5
+    # model's accuracy on the market-only subset (game 1 alone, which was correct): 100%
+    assert summary["model_subset_accuracy"] == 1.0
+    # market (0.5, home team LA actually won) is also "correct" by the >=0.5 threshold
+    assert summary["market_accuracy"] == 1.0
+    assert summary["blended_accuracy"] == 1.0

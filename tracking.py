@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import odds as odds_mod
 from data import completed_games
 from predict import MatchupPrediction
 
@@ -38,7 +39,7 @@ def _player_name(player: dict | None) -> str | None:
     return player["player_name"] if player else None
 
 
-def log_prediction(pred: MatchupPrediction, season: int, week: int) -> None:
+def log_prediction(pred: MatchupPrediction, season: int, week: int, market_home_win_prob: float | None = None) -> None:
     """Append one real, forward-looking prediction to the log.
 
     Call this only for actual upcoming games (the Weekly Report tab/CLI, which predicts
@@ -46,8 +47,18 @@ def log_prediction(pred: MatchupPrediction, season: int, week: int) -> None:
     - so the log stays a genuine record of real-time calls rather than casual exploration.
     Appends rather than overwrites: re-logging the same game later in the week (as
     injury news firms up) keeps every version, graded using the latest by default.
+
+    `market_home_win_prob`, when available (a real sportsbook line was found for this
+    matchup), is stored alongside the model's own probability so the 50/50 model/market
+    blend (odds.blended_probability - disclosed in the app as untested, since there's no
+    historical odds archive to backtest it against) can be graded empirically against
+    real results as they come in, going forward, instead of staying untested forever.
     """
     LOG_PATH.parent.mkdir(exist_ok=True)
+    blended_home_win_prob = (
+        odds_mod.blended_probability(pred.home_win_prob, market_home_win_prob)
+        if market_home_win_prob is not None else None
+    )
     record = {
         "logged_at": dt.datetime.now().isoformat(timespec="seconds"),
         "season": season,
@@ -56,6 +67,8 @@ def log_prediction(pred: MatchupPrediction, season: int, week: int) -> None:
         "away_team": pred.away_team,
         "home_win_prob": pred.home_win_prob,
         "projected_margin": pred.projected_margin,
+        "market_home_win_prob": market_home_win_prob,
+        "blended_home_win_prob": blended_home_win_prob,
         "home_qb": _player_name(pred.home_qb),
         "away_qb": _player_name(pred.away_qb),
         "home_rb": _player_name(pred.home_rb),
@@ -170,6 +183,8 @@ def grade_log(schedules: pd.DataFrame, weekly: pd.DataFrame) -> list[dict]:
                 "predicted_winner": predicted_winner, "actual_winner": actual_winner,
                 "winner_correct": predicted_winner == actual_winner,
                 "home_win_prob": r["home_win_prob"],
+                "market_home_win_prob": r.get("market_home_win_prob"),
+                "blended_home_win_prob": r.get("blended_home_win_prob"),
                 "projected_margin": r["projected_margin"], "actual_margin": float(actual_margin),
                 "margin_error": abs(r["projected_margin"] - actual_margin),
                 "personnel_checks": personnel_checks,
@@ -179,14 +194,28 @@ def grade_log(schedules: pd.DataFrame, weekly: pd.DataFrame) -> list[dict]:
     return graded
 
 
+def _win_accuracy_and_brier(rows: list[dict], prob_key: str) -> tuple[float, float]:
+    n = len(rows)
+    correct = sum((g[prob_key] >= 0.5) == (g["actual_winner"] == g["home_team"]) for g in rows)
+    brier = sum((g[prob_key] - (1.0 if g["actual_winner"] == g["home_team"] else 0.0)) ** 2 for g in rows) / n
+    return correct / n, brier
+
+
 def summarize(graded: list[dict]) -> dict:
     """Aggregate stats across a graded list - the live, real-world counterpart to
-    backtest.py's historical accuracy/Brier numbers."""
+    backtest.py's historical accuracy/Brier numbers.
+
+    Also reports the market's own accuracy and the 50/50 blend's, over whichever subset
+    of games actually had a real sportsbook line at logging time - this is how the
+    blend (which the app discloses as untested, since there's no historical odds
+    archive to backtest it against) gets validated: not in one shot, but by accumulating
+    real graded weeks over time. Early on this subset will be small; treat it
+    accordingly until enough weeks have logged with odds attached.
+    """
     if not graded:
         return {}
     n = len(graded)
-    accuracy = sum(g["winner_correct"] for g in graded) / n
-    brier = sum((g["home_win_prob"] - (1.0 if g["actual_winner"] == g["home_team"] else 0.0)) ** 2 for g in graded) / n
+    accuracy, brier = _win_accuracy_and_brier(graded, "home_win_prob")
     mean_margin_error = sum(g["margin_error"] for g in graded) / n
 
     personnel_flags = [v for g in graded for v in g["personnel_checks"].values()]
@@ -194,6 +223,20 @@ def summarize(graded: list[dict]) -> dict:
 
     gradable_props = [v for g in graded for v in g["prop_grades"].values() if v in ("Correct", "Missed")]
     prop_hit_rate = gradable_props.count("Correct") / len(gradable_props) if gradable_props else None
+
+    with_market = [g for g in graded if g.get("market_home_win_prob") is not None]
+    if with_market:
+        # the model's own accuracy restricted to this same subset, so all three numbers
+        # are a fair apples-to-apples comparison over identical games - the model's
+        # overall accuracy above (over ALL graded games) isn't directly comparable to
+        # the market/blend numbers if the market-subset games happen to differ in
+        # difficulty from the full set
+        model_subset_accuracy, model_subset_brier = _win_accuracy_and_brier(with_market, "home_win_prob")
+        market_accuracy, market_brier = _win_accuracy_and_brier(with_market, "market_home_win_prob")
+        blended_accuracy, blended_brier = _win_accuracy_and_brier(with_market, "blended_home_win_prob")
+    else:
+        model_subset_accuracy = model_subset_brier = None
+        market_accuracy = market_brier = blended_accuracy = blended_brier = None
 
     return {
         "games": n,
@@ -204,6 +247,13 @@ def summarize(graded: list[dict]) -> dict:
         "personnel_checks_total": len(personnel_flags),
         "prop_hit_rate": prop_hit_rate,
         "props_graded": len(gradable_props),
+        "market_games": len(with_market),
+        "model_subset_accuracy": model_subset_accuracy,
+        "model_subset_brier": model_subset_brier,
+        "market_accuracy": market_accuracy,
+        "market_brier": market_brier,
+        "blended_accuracy": blended_accuracy,
+        "blended_brier": blended_brier,
     }
 
 
@@ -242,6 +292,14 @@ def main():
         )
     if summary["prop_hit_rate"] is not None:
         print(f"Prop hit rate: {summary['prop_hit_rate']:.1%} (of {summary['props_graded']} gradable props - personnel mismatches excluded)")
+    if summary["market_games"]:
+        print(
+            f"\nModel vs. market vs. blend, over the same {summary['market_games']} games that had a "
+            f"real sportsbook line at logging time (small sample early on, treat accordingly):"
+        )
+        print(f"  Model:   accuracy {summary['model_subset_accuracy']:.1%}   brier {summary['model_subset_brier']:.4f}")
+        print(f"  Market:  accuracy {summary['market_accuracy']:.1%}   brier {summary['market_brier']:.4f}")
+        print(f"  Blended: accuracy {summary['blended_accuracy']:.1%}   brier {summary['blended_brier']:.4f}")
 
 
 if __name__ == "__main__":
