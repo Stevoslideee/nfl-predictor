@@ -240,6 +240,40 @@ Real, quantified confirmation that who starts at QB is highly stable
 week-to-week, while who leads a team in receiving yards genuinely isn't -
 useful context for how much to trust a WR yardage prop versus a QB one.
 
+### Fixing the WR/TE leader pick
+
+That 2/16 WR result was surprising enough to check at scale rather than
+trust from one week - and a home/away split that looked significant in
+the same data (15/16 vs. 9/16, p=0.037) turned out to be pure small-sample
+noise: replayed across ~2,400 real games (2016-2024), home vs. away
+assumed-leader accuracy is statistically identical for every position
+(p > 0.6 in all four cases). Good reminder that a pattern noticed *after*
+seeing it needs a much bigger sample before it's trusted.
+
+The underlying gap was real, though - and worse than one week suggested:
+
+| Position | Assumed-leader accuracy (~4,860 real team-games) |
+|---|---|
+| QB | 79.5% |
+| RB | 61.9% |
+| TE | 60.0% |
+| WR | 42.9% |
+
+`player_stats.py` picked a team's featured RB/WR/TE by trailing
+rushing+receiving *yards*. Tested the obvious alternative - trailing
+*targets* - with the same fit(2016-2019)/holdout(2020-2024) discipline as
+the Elo tuning: yards clearly wins for RB (a real rushing role is
+yards-driven: 62% vs ~50% for targets), but targets meaningfully and
+repeatably beats yards for WR (42.6% -> 45.6% on data never touched
+during the comparison) and TE (60.6% -> 63.7%) - receiving yardage is
+heavily skewed by big plays and game script, while targets reflect a more
+stable "is the offense built around this player" signal. `player_stats.
+_leader_for_position()` now ranks RB by yards and WR/TE by targets
+(`_LEADER_RANK_STAT`); the combined "top skill players" display
+(`_skill_leaders_from`) is unchanged, since it's informational only, not
+used for prop targeting. WR is still the hardest position to call by a
+wide margin - this is a real, validated improvement, not a fix.
+
 ### Running it automatically every day
 
 `daily_update.py` logs the current week's predictions and re-grades

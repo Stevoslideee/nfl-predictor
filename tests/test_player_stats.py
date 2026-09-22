@@ -1,6 +1,7 @@
 import player_stats
 from player_stats import (
     QB_TENURE_WINDOW,
+    _leader_for_position,
     _qb_tenure,
     _starting_qb_from,
     before_cutoff,
@@ -89,6 +90,40 @@ def test_team_form_snapshot_shape():
     assert snap["wr"] is None
     assert snap["te"] is None
     assert isinstance(snap["skill"], list)
+
+
+def test_leader_for_position_rb_ranks_by_yards():
+    # high-yardage back should win even with fewer targets - validated: yards is the
+    # right signal for RB (a real rushing role is yards-driven)
+    rows = [skill_row("Workhorse", "RB", "BUF", 2024, w, carries=20, rushing_yards=100, targets=1) for w in range(1, 6)]
+    rows += [skill_row("PassCatcher", "RB", "BUF", 2024, w, carries=2, rushing_yards=10, targets=8) for w in range(1, 6)]
+    hist = before_cutoff(weekly_df(rows), 2024, 6)
+    leader = _leader_for_position(hist[hist["recent_team"] == "BUF"], "RB")
+    assert leader["player_name"] == "Workhorse"
+
+
+def test_leader_for_position_wr_ranks_by_targets_not_yards():
+    # WR is ranked by trailing TARGETS, not yards - validated against real historical
+    # games (see README): a low-target big-play WR should lose to a high-target,
+    # lower-yardage possession WR, the opposite of what a yards-based ranking would pick
+    rows = [skill_row("BigPlay", "WR", "BUF", 2024, w, receiving_yards=90, targets=3, receptions=2) for w in range(1, 6)]
+    rows += [skill_row("Possession", "WR", "BUF", 2024, w, receiving_yards=50, targets=10, receptions=8) for w in range(1, 6)]
+    hist = before_cutoff(weekly_df(rows), 2024, 6)
+    leader = _leader_for_position(hist[hist["recent_team"] == "BUF"], "WR")
+    assert leader["player_name"] == "Possession"
+
+
+def test_leader_for_position_te_ranks_by_targets_not_yards():
+    rows = [skill_row("BigPlay", "TE", "BUF", 2024, w, receiving_yards=80, targets=2, receptions=1) for w in range(1, 6)]
+    rows += [skill_row("Possession", "TE", "BUF", 2024, w, receiving_yards=40, targets=9, receptions=7) for w in range(1, 6)]
+    hist = before_cutoff(weekly_df(rows), 2024, 6)
+    leader = _leader_for_position(hist[hist["recent_team"] == "BUF"], "TE")
+    assert leader["player_name"] == "Possession"
+
+
+def test_leader_for_position_none_when_no_candidates():
+    hist = before_cutoff(weekly_df([qb_row("Q", "BUF", 2024, 1)]), 2024, 2)
+    assert _leader_for_position(hist[hist["recent_team"] == "BUF"], "WR") is None
 
 
 def test_espn_name_to_nflverse_basic():

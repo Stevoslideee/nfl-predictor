@@ -147,6 +147,12 @@ def _player_trailing_skill_stats(team_hist: pd.DataFrame, player_name: str, posi
 def _skill_leaders_from(
     team_hist: pd.DataFrame, positions: tuple[str, ...], n_games: int = 5, top_n: int = 2
 ) -> list[dict]:
+    """Combined RB/WR/TE leaderboard by trailing yards, for the general "top skill
+    players" display only - see _leader_for_position() for identifying the specific
+    featured player at one position, which uses whichever stat actually predicts that
+    position's real-game leader best (yards and targets aren't comparable in magnitude
+    across positions, so this combined ranking is just a production summary, not a
+    per-position "who's featured" signal)."""
     pos_hist = team_hist[team_hist["position"].isin(positions)]
     if pos_hist.empty:
         return []
@@ -169,6 +175,44 @@ def _skill_leaders_from(
     # Once we know who the leader(s) are, report each one's own trailing stats rather
     # than the shared-window numbers used only to rank them.
     return [_player_trailing_skill_stats(team_hist, r.player_name, r.position, n_games) for r in ranked.itertuples()]
+
+
+# Which trailing stat best predicts a position's REAL game leader, per a live-tracking
+# investigation checked against ~2,400 real historical games (see README): RB by
+# trailing yards (a real rushing role is yards-driven - yards clearly wins there,
+# 62% vs ~50% for targets/receptions). WR and TE by trailing TARGETS instead of
+# yards - receiving yardage is heavily skewed by big plays and game script, while
+# targets reflect a more stable "is the offense built around this player" signal,
+# and out-predicts yards for these two positions on held-out data (WR: 42.6% -> 45.6%,
+# TE: 60.6% -> 63.7%). Modest gains, not a solved problem - WR especially remains hard
+# to call - but real and replicated on data never touched during the comparison.
+_LEADER_RANK_STAT = {"RB": "yards", "WR": "targets", "TE": "targets"}
+
+
+def _leader_for_position(team_hist: pd.DataFrame, position: str, n_games: int = 5) -> dict | None:
+    """The single most-featured player at one position, ranked by whichever trailing
+    stat best predicts who actually leads that position in a real game (see
+    _LEADER_RANK_STAT) - this is what drives the RB/WR/TE prop probabilities and the
+    "featured player" display, so it uses the validated-best signal per position,
+    unlike _skill_leaders_from's combined display-only ranking."""
+    pos_hist = team_hist[team_hist["position"] == position]
+    if pos_hist.empty:
+        return None
+
+    recent_weeks = pos_hist[["season", "week"]].drop_duplicates().sort_values(["season", "week"]).tail(n_games)
+    recent = pos_hist.merge(recent_weeks, on=["season", "week"])
+    recent = recent.copy()
+
+    rank_stat = _LEADER_RANK_STAT.get(position, "yards")
+    if rank_stat == "yards":
+        recent["rank_value"] = recent[["rushing_yards", "receiving_yards"]].fillna(0).sum(axis=1)
+    else:
+        recent["rank_value"] = recent[rank_stat].fillna(0)
+
+    ranked = recent.groupby("player_name")["rank_value"].mean().sort_values(ascending=False)
+    if ranked.empty:
+        return None
+    return _player_trailing_skill_stats(team_hist, ranked.index[0], position, n_games)
 
 
 def top_skill_players(
@@ -200,18 +244,12 @@ def team_form_snapshot(hist: pd.DataFrame, team: str, n_games: int = 5) -> dict:
     team_hist = hist[hist["recent_team"] == team]
     qb = _starting_qb_from(team_hist, n_games)
 
-    # One combined query instead of four (skill/RB/WR/TE each doing their own groupby) -
-    # _skill_leaders_from now tags each row with its position, so RB/WR/TE leaders are
-    # just a filter over this single result instead of a separate full aggregation.
-    skill_leaders = _skill_leaders_from(team_hist, ("RB", "WR", "TE"), n_games, top_n=50)
-    by_position = {pos: next((p for p in skill_leaders if p["position"] == pos), None) for pos in ("RB", "WR", "TE")}
-
     return {
         "qb": _qb_form_from(team_hist, qb, n_games),
-        "skill": skill_leaders[:2],
-        "rb": by_position["RB"],
-        "wr": by_position["WR"],
-        "te": by_position["TE"],
+        "skill": _skill_leaders_from(team_hist, ("RB", "WR", "TE"), n_games, top_n=2),
+        "rb": _leader_for_position(team_hist, "RB", n_games),
+        "wr": _leader_for_position(team_hist, "WR", n_games),
+        "te": _leader_for_position(team_hist, "TE", n_games),
     }
 
 
