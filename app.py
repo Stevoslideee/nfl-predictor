@@ -1,10 +1,12 @@
 """Streamlit UI: an NFL matchup predictor plus a live/recent game stats viewer."""
 
 import datetime as dt
+import time
 
 import pandas as pd
 import streamlit as st
 
+import field_view
 import injuries as injuries_mod
 import live
 import odds as odds_mod
@@ -51,6 +53,11 @@ def get_scoreboard_cached(week, season):
 @st.cache_data(ttl=30, show_spinner="Loading box score...")
 def get_boxscore_cached(game_id):
     return live.get_boxscore(game_id)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def get_play_by_play_cached(game_id):
+    return live.get_play_by_play(game_id)
 
 
 @st.cache_data(ttl=1800, show_spinner="Checking sportsbook odds...")
@@ -142,7 +149,9 @@ except Exception as e:
     st.error(f"Couldn't load NFL data ({e.__class__.__name__}). Check your connection and reload.")
     st.stop()
 
-predict_tab, live_tab, week_tab = st.tabs(["Matchup Predictor", "Live & Recent Player Stats", "Weekly Report"])
+predict_tab, live_tab, pbp_tab, week_tab = st.tabs(
+    ["Matchup Predictor", "Live & Recent Player Stats", "Live Play-by-Play", "Weekly Report"]
+)
 
 with predict_tab:
     st.caption("Elo ratings + recent QB form. An informed opinion, not a guarantee — see the README for backtested accuracy.")
@@ -513,6 +522,66 @@ with live_tab:
                             st.caption(f"↳ {r['player']} — no recent history on file")
 
     st.caption("ESPN live data + official NFL history. Name-matching is best-effort — a line may occasionally be missing.")
+
+with pbp_tab:
+    st.caption(
+        "Ball position, down & distance, updating play by play from ESPN's live feed. This shows field "
+        "position, not individual player positions — that's NFL Next Gen Stats tracking data, which isn't "
+        "available through any public feed, ESPN's included."
+    )
+
+    pbp_browse_past = st.checkbox("Browse a past week instead of the current one", key="pbp_browse_past")
+    pbp_sb_week = pbp_sb_season = None
+    if pbp_browse_past:
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            pbp_sb_season = st.number_input(
+                "Season", min_value=2010, max_value=dt.date.today().year, value=dt.date.today().year, key="pbp_season"
+            )
+        with pc2:
+            pbp_sb_week = st.number_input("Week", min_value=1, max_value=22, value=1, key="pbp_week")
+
+    pbp_scoreboard = get_scoreboard_cached(pbp_sb_week, pbp_sb_season)
+    pbp_games = pbp_scoreboard["games"]
+
+    if not pbp_games:
+        st.info("No games found for that week.")
+    else:
+        def _pbp_label(g):
+            flag = "🔴 LIVE" if g["is_live"] else g["status"]
+            score = f"{g['away_team']} {g['away_score']} @ {g['home_team']} {g['home_score']}"
+            return f"{flag} — {score}"
+
+        pbp_choice = st.selectbox("Game", pbp_games, format_func=_pbp_label, key="pbp_game_select")
+        auto_refresh = st.checkbox("Auto-refresh every 10s", value=pbp_choice["is_live"] if pbp_choice else False)
+
+        if pbp_choice:
+            pbp_data = get_play_by_play_cached(pbp_choice["game_id"])
+            plays = pbp_data.get("plays", [])
+
+            if not plays:
+                st.info("No plays yet for this game — check back once it kicks off.")
+            else:
+                latest = plays[-1]
+                home_team, away_team = pbp_data["home_team"], pbp_data["away_team"]
+                svg, caption = field_view.render_field_svg(latest, home_team, away_team)
+
+                score_line = f"{away_team} {latest['away_score']} — {home_team} {latest['home_score']}"
+                quarter_line = f"Q{latest['quarter']} {latest['clock']}" if latest.get("quarter") else ""
+                st.markdown(f"**{score_line}**  ·  {quarter_line}  ·  {caption}")
+                st.markdown(svg, unsafe_allow_html=True)
+                st.caption(latest.get("text") or "")
+
+                st.markdown("**Recent plays**")
+                for p in reversed(plays[-15:]):
+                    q = f"Q{p['quarter']} {p['clock']}" if p.get("quarter") else ""
+                    score = f"{p['away_score']}-{p['home_score']}"
+                    marker = "🏈 " if p.get("scoring_play") else ("↩️ " if p.get("is_turnover") else "")
+                    st.caption(f"{marker}{q} ({score}) — {p.get('text') or ''}")
+
+        if auto_refresh:
+            time.sleep(10)
+            st.rerun()
 
 with week_tab:
     st.caption("Model vs. market favorite for every game this week — flags a big gap or a different pick entirely.")

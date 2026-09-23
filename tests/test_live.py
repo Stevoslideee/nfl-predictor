@@ -114,3 +114,85 @@ def test_get_injuries_batch_deduplicates_game_ids(monkeypatch):
 
 def test_get_injuries_batch_empty_input_returns_empty_dict():
     assert live.get_injuries_batch([]) == {}
+
+
+def _pbp_payload(previous_plays, current_plays=None):
+    payload = {
+        "header": {
+            "competitions": [
+                {
+                    "competitors": [
+                        {"homeAway": "home", "team": {"id": "2", "abbreviation": "BUF"}},
+                        {"homeAway": "away", "team": {"id": "8", "abbreviation": "DET"}},
+                    ]
+                }
+            ]
+        },
+        "drives": {"previous": [{"plays": previous_plays}]},
+    }
+    if current_plays is not None:
+        payload["drives"]["current"] = {"plays": current_plays}
+    return payload
+
+
+def _play(team_id, yard_line, down=1, distance=10, quarter=1, text="some play"):
+    return {
+        "id": "1",
+        "period": {"number": quarter},
+        "clock": {"displayValue": "10:00"},
+        "text": text,
+        "end": {"down": down, "distance": distance, "yardLine": yard_line, "team": {"id": team_id}},
+        "homeScore": 0,
+        "awayScore": 0,
+        "scoringPlay": False,
+        "isTurnover": False,
+    }
+
+
+def test_get_play_by_play_resolves_home_and_away(monkeypatch):
+    payload = _pbp_payload([_play("2", 25)])
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
+    result = live.get_play_by_play("12345")
+    assert result["home_team"] == "BUF"
+    assert result["away_team"] == "DET"
+    assert len(result["plays"]) == 1
+
+
+def test_get_play_by_play_abs_yard_line_for_home_possession(monkeypatch):
+    # home team (id 2, BUF) at their own 25 -> abs_yard_line is that value directly,
+    # since 0 is defined as the home team's own goal line
+    payload = _pbp_payload([_play("2", 25)])
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
+    result = live.get_play_by_play("12345")
+    assert result["plays"][0]["abs_yard_line"] == 25.0
+    assert result["plays"][0]["possession"] == "BUF"
+
+
+def test_get_play_by_play_abs_yard_line_for_away_possession(monkeypatch):
+    # away team (id 8, DET) at their own 25 -> mirrored, since 100 is the away team's
+    # own goal line on this fixed scale
+    payload = _pbp_payload([_play("8", 25)])
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
+    result = live.get_play_by_play("12345")
+    assert result["plays"][0]["abs_yard_line"] == 75.0
+    assert result["plays"][0]["possession"] == "DET"
+
+
+def test_get_play_by_play_appends_current_drive_after_previous(monkeypatch):
+    payload = _pbp_payload([_play("2", 25, text="first")], current_plays=[_play("2", 30, text="second")])
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
+    result = live.get_play_by_play("12345")
+    assert [p["text"] for p in result["plays"]] == ["first", "second"]
+
+
+def test_get_play_by_play_returns_empty_dict_on_network_failure(monkeypatch):
+    def raise_error(*a, **k):
+        raise live.requests.RequestException("boom")
+
+    monkeypatch.setattr(live._session, "get", raise_error)
+    assert live.get_play_by_play("12345") == {}
+
+
+def test_get_play_by_play_returns_empty_dict_on_malformed_payload(monkeypatch):
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse({"drives": {}}))
+    assert live.get_play_by_play("12345") == {}

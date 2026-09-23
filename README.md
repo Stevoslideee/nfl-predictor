@@ -6,7 +6,9 @@ since 2010, each team's recent starting-QB performance, and four context
 adjustments - QB injuries, rest days, divisional games, and weather (see
 below). Also includes a live scores and player stats tab so you can watch
 in-progress games with each player's current line shown next to their
-recent-form average.
+recent-form average, and a live play-by-play tab showing ball position and
+down/distance on a field diagram, updating play by play (see "Live
+play-by-play" below).
 
 **Read this before you use it for anything:** this is an honest statistical
 model, not an edge. Backtested against 2018-2024 (1,670 real games):
@@ -84,6 +86,24 @@ it - but it materially sharpens the exact scenario it's meant for: the
 full-context backtest (which includes the injury swap) went from 64.3% to
 65.0% accuracy after this change, since a freshly-inserted backup's low
 tenure now gets the full-strength adjustment instead of a diluted one.
+
+### Testing travel distance as a signal (rejected)
+
+Rest days are already in the model (above), but rest and travel are distinct:
+a team can be well-rested and still fly cross-country. Tested whether the
+away team's travel distance (great-circle miles between the two teams' home
+stadiums, added as a small Elo adjustment favoring the home team in
+proportion to distance traveled) improves on the existing rest+HFA+Elo model.
+
+Swept several adjustment strengths on 2016-2019, picked the best-looking one,
+then checked it once on the 2020-2024 holdout - same discipline as every
+other change here. Every strength tested made fit-period accuracy *worse*
+(66.0% baseline down to 65.0-65.5%), and the best-on-fit setting also lost
+on holdout (64.9% to 64.8%, Brier 0.2232 to 0.2234). Rejected - not wired
+into the model. Likely explanation: whatever real travel penalty exists is
+probably already folded into Elo (a team's rating reflects its actual
+results, travel and all) and into the rest-days adjustment, so a separate
+distance term is redundant noise rather than new information.
 
 ## Optional: live sportsbook odds
 
@@ -230,6 +250,25 @@ above were generated - re-run it any time to sanity-check accuracy after
 changing the model. Pass `--skip-context` to compare only plain Elo vs.
 Elo + QB form (faster - skips loading injury data and computing the
 injury/rest/division/weather variant).
+
+## Live play-by-play
+
+The "Live Play-by-Play" tab draws a schematic football field showing ball
+position, line of scrimmage, and the first-down marker, updating as ESPN's
+live feed adds new plays - pick a game, and it re-fetches every 15 seconds
+(or manually, via the game picker) with an optional 10-second auto-refresh
+checkbox while a game is live.
+
+**What this can't show, and why:** individual player positions on the field
+(the "22 dots moving around" kind of visualization) require NFL Next Gen
+Stats player-tracking data, which is proprietary - it belongs to the NFL and
+its broadcast partners, and isn't available through ESPN's public feed or
+any other free source. What ESPN's feed *does* have, and what this tab uses,
+is real: down, distance, yard line, play type, and the play-by-play text
+description, all updating live. `live.get_play_by_play()` normalizes ESPN's
+per-team-relative yard line into one fixed 0-100 scale (0 = the home team's
+own goal line, 100 = the away team's) so the field diagram doesn't need to
+flip sides depending on who has the ball.
 
 ## Live prediction tracking
 
@@ -453,7 +492,13 @@ table - useful for scripting or a quick terminal check without opening the app.
   of the data; a caller scoring many games for the same week (Weekly
   Report, season recap) filters the full history once via
   `weekly_hist_as_of()` and reuses it across every game, instead of each
-  prediction rescanning the whole dataset on its own.
+  prediction rescanning the whole dataset on its own. Within one
+  `team_form_snapshot()` call, the QB-position and RB/WR/TE-position filters
+  are each computed once and shared across the QB-tenure check and the
+  three per-position leader lookups, instead of each re-scanning the same
+  team's history from scratch - found by profiling a real prediction run
+  (2.3x faster on this function, same output every time, since filtering an
+  already-filtered subset further can't drop or add rows).
 - **`predict.py`** - combines Elo, the QB-form adjustment, and the four
   context adjustments (injury/rest/division/weather) into a final win
   probability and projected point margin. `qb_elo_adjustment` weights its
@@ -516,7 +561,16 @@ table - useful for scripting or a quick terminal check without opening the app.
   to override the cached weekly injury designation with a fresher one -
   `predict_matchup`'s `live_injury_lookup` parameter, provided only for
   real predictions and never by `backtest.py`, so historical replays stay
-  exactly reproducible.
+  exactly reproducible. `get_injuries_batch()` fetches several games
+  concurrently (a whole week's slate one-at-a-time used to take 15+ seconds;
+  concurrently, close to 1). `get_play_by_play()` normalizes ESPN's live
+  play feed into a fixed field-position scale for the Live Play-by-Play tab
+  (see "Live play-by-play" above). All three share one module-level
+  `requests.Session()` so repeated calls reuse the connection instead of
+  each paying a fresh TLS handshake.
+- **`field_view.py`** - renders one play's ball position, line of
+  scrimmage, and first-down marker as an SVG field diagram, for the Live
+  Play-by-Play tab.
 - **`injuries.py`** - official weekly injury report lookups (no API key
   needed) - the QB's status drives the backup-swap in `predict.py`; every
   other injury is still shown as plain context rather than folded into the

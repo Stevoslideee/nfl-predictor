@@ -169,6 +169,75 @@ def get_injuries(game_id: str) -> dict[str, pd.DataFrame]:
         return {}
 
 
+def get_play_by_play(game_id: str) -> dict:
+    """Live/final play-by-play for one game, with enough per-play detail to draw a
+    schematic field diagram: an absolute field position (0 = the home team's own goal
+    line, 100 = the away team's own goal line, regardless of who has the ball, so a
+    caller can place the ball at the same coordinate system play after play), down and
+    distance, the play's text description, and the running score.
+
+    This does NOT include individual player positions - that's NFL Next Gen Stats
+    tracking data, which is proprietary and not part of any public feed (ESPN's
+    included). What's here is genuinely live: ESPN's own broadcast-facing play feed.
+
+    Returns {} on any failure, or before a game's first drive has started (a
+    "Scheduled" game has no drives yet - same reasoning as get_boxscore).
+    """
+    try:
+        resp = _session.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        competitors = data["header"]["competitions"][0]["competitors"]
+        id_to_abbr: dict[str, str] = {}
+        home_team = away_team = None
+        for c in competitors:
+            abbr = normalize_team(c["team"]["abbreviation"])
+            id_to_abbr[c["team"]["id"]] = abbr
+            if c["homeAway"] == "home":
+                home_team = abbr
+            else:
+                away_team = abbr
+
+        drives_data = data.get("drives", {})
+        all_drives = list(drives_data.get("previous", []))
+        current_drive = drives_data.get("current")
+        if current_drive:
+            all_drives.append(current_drive)
+
+        plays = []
+        for drive in all_drives:
+            for p in drive.get("plays", []):
+                end = p.get("end", {})
+                team_id = end.get("team", {}).get("id")
+                possession = id_to_abbr.get(team_id)
+                yard_line = end.get("yardLine")
+                abs_yard_line = None
+                if yard_line is not None and possession is not None:
+                    abs_yard_line = float(yard_line) if possession == home_team else 100.0 - float(yard_line)
+                plays.append(
+                    {
+                        "id": p.get("id"),
+                        "quarter": p.get("period", {}).get("number"),
+                        "clock": p.get("clock", {}).get("displayValue"),
+                        "text": p.get("text"),
+                        "down": end.get("down"),
+                        "distance": end.get("distance"),
+                        "possession": possession,
+                        "abs_yard_line": abs_yard_line,
+                        "yards_to_endzone": end.get("yardsToEndzone"),
+                        "home_score": p.get("homeScore"),
+                        "away_score": p.get("awayScore"),
+                        "scoring_play": bool(p.get("scoringPlay", False)),
+                        "is_turnover": bool(p.get("isTurnover", False)),
+                    }
+                )
+
+        return {"home_team": home_team, "away_team": away_team, "plays": plays}
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
+        return {}
+
+
 def get_injuries_batch(game_ids: list[str]) -> dict[str, dict[str, pd.DataFrame]]:
     """get_injuries() for several games at once, fetched concurrently.
 
