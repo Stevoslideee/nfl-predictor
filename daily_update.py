@@ -60,10 +60,12 @@ def send_toast(title: str, message: str) -> None:
     subprocess.run([PWSH_EXE, "-NoProfile", "-Command", script], check=True, timeout=30, capture_output=True)
 
 
-def _build_live_injury_lookup(game: dict):
+def _build_live_injury_lookup(game: dict, injuries_by_game: dict):
     """Same idea as app.py's build_live_injury_lookup, minus the Streamlit caching (a
-    plain script, no @st.cache_data available) - one real fetch per game per daily run
-    is cheap enough it doesn't need its own cache.
+    plain script, no @st.cache_data available) - injuries_by_game is prefetched once for
+    every game in the slate via live.get_injuries_batch() (concurrently - see there for
+    why: fetching each game's report one at a time in this loop used to be the single
+    biggest chunk of this script's runtime, ~15s of a ~18s run for a 16-game week).
 
     Skips a game that's already Final - see app.py's build_live_injury_lookup for why
     (a live feed reflects a team's CURRENT status, not their status before a game
@@ -74,7 +76,7 @@ def _build_live_injury_lookup(game: dict):
     game_id = game.get("game_id")
     if game_id is None or game.get("status") == "Final":
         return None
-    injuries_by_team = live.get_injuries(game_id)
+    injuries_by_team = injuries_by_game.get(game_id)
     if not injuries_by_team:
         return None
 
@@ -106,6 +108,9 @@ def run(f) -> None:
     matchups = [(g["home_team"], g["away_team"]) for g in games]
     prefetch_weather_for_matchups(schedules, matchups, season, week)
 
+    live_game_ids = [g["game_id"] for g in games if g.get("status") != "Final"]
+    injuries_by_game = live.get_injuries_batch(live_game_ids)
+
     try:
         market_games = odds_mod.fetch_odds()
     except odds_mod.OddsApiError as e:
@@ -119,7 +124,7 @@ def run(f) -> None:
             pred = predict_matchup(
                 schedules, weekly, home, away, season, week,
                 injuries=injuries, elo_state=elo_state, weekly_hist=weekly_hist,
-                live_injury_lookup=_build_live_injury_lookup(g),
+                live_injury_lookup=_build_live_injury_lookup(g, injuries_by_game),
             )
             match = odds_mod.find_matchup(market_games, home, away)
             tracking.log_prediction(pred, season, week, market_home_win_prob=match["home_win_prob"] if match else None)

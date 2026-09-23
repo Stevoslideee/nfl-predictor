@@ -78,18 +78,36 @@ def get_defense_hist_cached(season, week):
     return defense_hist_as_of(team_stats, season, week)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+# 30 minutes (~one NFL quarter of real time) rather than a tighter TTL: live injury
+# status doesn't need finer granularity than that even during a live game, and it cuts
+# ESPN API calls substantially over a full slate.
+LIVE_INJURY_CACHE_TTL = 1800
+
+
+@st.cache_data(ttl=LIVE_INJURY_CACHE_TTL, show_spinner=False)
 def get_live_injuries_cached(game_id):
     return live.get_injuries(game_id)
 
 
-def build_live_injury_lookup(season, week, home_team, away_team):
+@st.cache_data(ttl=LIVE_INJURY_CACHE_TTL, show_spinner=False)
+def get_live_injuries_batch_cached(game_ids: tuple):
+    return live.get_injuries_batch(list(game_ids))
+
+
+def build_live_injury_lookup(season, week, home_team, away_team, injuries_by_game=None):
     """A live_injury_lookup callable for predict_matchup, sourced from ESPN's feed
     (fresher than the cached weekly report - see predict.predict_matchup's docstring)
     when this exact matchup is findable there. Falls back to None (no override) for a
     hypothetical, far-future, or long-past matchup ESPN doesn't have live data for -
     predict_matchup then just uses the cached weekly injury report, same as before this
     existed.
+
+    injuries_by_game is an optional prefetched {game_id: injuries_by_team} map (from
+    get_live_injuries_batch_cached) - pass it when looping over a whole week's slate
+    (Weekly Report tab) so every game's report is fetched concurrently up front instead
+    of one at a time in the loop, which used to be the loop's dominant cost. Left as
+    None for a single lookup (Matchup Predictor tab), which falls back to fetching just
+    that one game.
 
     Skips games that are already Final: a live injury feed reflects a team's CURRENT
     status, which for an already-decided game means "whatever's true heading into their
@@ -102,7 +120,10 @@ def build_live_injury_lookup(season, week, home_team, away_team):
     game = live.find_game(scoreboard["games"], home_team, away_team)
     if game is None or game.get("status") == "Final":
         return None
-    injuries_by_team = get_live_injuries_cached(game["game_id"])
+    if injuries_by_game is not None:
+        injuries_by_team = injuries_by_game.get(game["game_id"])
+    else:
+        injuries_by_team = get_live_injuries_cached(game["game_id"])
     if not injuries_by_team:
         return None
 
@@ -537,10 +558,12 @@ with week_tab:
                 prefetch_weather_for_matchups(
                     schedules, [(g["home_team"], g["away_team"]) for g in report_games], int(wk_season), int(wk_week)
                 )
+            live_game_ids = tuple(g["game_id"] for g in report_games if g.get("status") != "Final")
+            injuries_by_game = get_live_injuries_batch_cached(live_game_ids)
             progress = st.progress(0.0, text="Running predictions...")
             for i, g in enumerate(report_games):
                 home, away = g["home_team"], g["away_team"]
-                live_lookup = build_live_injury_lookup(wk_season, wk_week, home, away)
+                live_lookup = build_live_injury_lookup(wk_season, wk_week, home, away, injuries_by_game)
                 pred = predict_matchup(
                     schedules, weekly, home, away, int(wk_season), int(wk_week),
                     injuries=injuries_df, elo_state=week_elo_state, weekly_hist=week_weekly_hist,

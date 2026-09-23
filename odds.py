@@ -16,6 +16,10 @@ import requests
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
 
+# See live.py's _session for why: a bare requests.get() rebuilds its connection pool
+# (and re-parses the OS certificate trust store) on every call.
+_session = requests.Session()
+
 # The Odds API uses full franchise names; map them to nflverse's team abbreviations.
 TEAM_NAME_TO_ABBR = {
     "Arizona Cardinals": "ARI",
@@ -101,7 +105,7 @@ def fetch_odds(regions: str = "us", markets: str = "h2h,spreads") -> list[dict]:
         )
 
     try:
-        resp = requests.get(
+        resp = _session.get(
             ODDS_API_BASE,
             params={"apiKey": api_key, "regions": regions, "markets": markets, "oddsFormat": "american"},
             timeout=15,

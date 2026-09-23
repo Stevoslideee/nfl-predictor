@@ -52,7 +52,7 @@ def _injury_payload():
 
 
 def test_get_injuries_parses_real_shaped_payload(monkeypatch):
-    monkeypatch.setattr(live.requests, "get", lambda *a, **k: _FakeResponse(_injury_payload()))
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(_injury_payload()))
     result = live.get_injuries("12345")
     assert set(result.keys()) == {"NYG"}
     df = result["NYG"]
@@ -65,7 +65,7 @@ def test_get_injuries_parses_real_shaped_payload(monkeypatch):
 def test_get_injuries_handles_missing_details(monkeypatch):
     payload = _injury_payload()
     payload["injuries"][0]["injuries"][0]["details"] = None
-    monkeypatch.setattr(live.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
     result = live.get_injuries("12345")
     assert result["NYG"].iloc[0]["report_primary_injury"] is None
 
@@ -73,7 +73,7 @@ def test_get_injuries_handles_missing_details(monkeypatch):
 def test_get_injuries_applies_team_abbreviation_normalization(monkeypatch):
     payload = _injury_payload()
     payload["injuries"][0]["team"]["abbreviation"] = "LAR"
-    monkeypatch.setattr(live.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse(payload))
     result = live.get_injuries("12345")
     assert set(result.keys()) == {"LA"}  # LAR -> LA, same fix used by get_scoreboard/get_boxscore
 
@@ -82,10 +82,35 @@ def test_get_injuries_returns_empty_dict_on_network_failure(monkeypatch):
     def raise_error(*a, **k):
         raise live.requests.RequestException("boom")
 
-    monkeypatch.setattr(live.requests, "get", raise_error)
+    monkeypatch.setattr(live._session, "get", raise_error)
     assert live.get_injuries("12345") == {}
 
 
 def test_get_injuries_returns_empty_dict_on_malformed_payload(monkeypatch):
-    monkeypatch.setattr(live.requests, "get", lambda *a, **k: _FakeResponse({"injuries": [{"team": {}}]}))
+    monkeypatch.setattr(live._session, "get", lambda *a, **k: _FakeResponse({"injuries": [{"team": {}}]}))
     assert live.get_injuries("12345") == {}
+
+
+def test_get_injuries_batch_fetches_each_game_and_keys_by_id(monkeypatch):
+    calls = []
+
+    def fake_get_injuries(game_id):
+        calls.append(game_id)
+        return {"NYG": game_id}  # cheap stand-in, just needs to round-trip
+
+    monkeypatch.setattr(live, "get_injuries", fake_get_injuries)
+    result = live.get_injuries_batch(["111", "222", "333"])
+
+    assert sorted(calls) == ["111", "222", "333"]  # every id fetched, order doesn't matter (concurrent)
+    assert result == {"111": {"NYG": "111"}, "222": {"NYG": "222"}, "333": {"NYG": "333"}}
+
+
+def test_get_injuries_batch_deduplicates_game_ids(monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "get_injuries", lambda game_id: calls.append(game_id) or {})
+    live.get_injuries_batch(["111", "111", "222"])
+    assert sorted(calls) == ["111", "222"]
+
+
+def test_get_injuries_batch_empty_input_returns_empty_dict():
+    assert live.get_injuries_batch([]) == {}

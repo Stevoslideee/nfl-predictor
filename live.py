@@ -6,11 +6,20 @@ game ends - so this covers both "what's happening right now" and "what just
 happened," complementing the multi-season historical data in data.py.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 import requests
 
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary"
+
+# A bare requests.get() builds a brand-new connection pool (and re-parses the OS
+# certificate trust store) on every single call - measured at ~0.4-1.4s of pure
+# overhead per call on this machine, independent of network latency. A shared Session
+# reuses the pool and keeps the connection alive, so every call after the first one to
+# the same host drops to ~0.02s (same pattern data.py already uses for nflverse).
+_session = requests.Session()
 
 TEAM_ABBR_FIXES = {"WSH": "WAS", "JAX": "JAX", "LAR": "LA"}  # ESPN vs nflverse abbreviation mismatches
 
@@ -39,7 +48,7 @@ def get_scoreboard(week: int | None = None, season: int | None = None) -> dict:
         params["seasontype"] = 2
 
     try:
-        resp = requests.get(SCOREBOARD_URL, params=params, timeout=15)
+        resp = _session.get(SCOREBOARD_URL, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -78,7 +87,7 @@ def get_boxscore(game_id: str) -> dict[str, list[dict]]:
     be fetched should show as "no box score available," not crash the page.
     """
     try:
-        resp = requests.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
+        resp = _session.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -136,7 +145,7 @@ def get_injuries(game_id: str) -> dict[str, pd.DataFrame]:
     season). Returns {} on any failure, same reasoning as get_boxscore.
     """
     try:
-        resp = requests.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
+        resp = _session.get(SUMMARY_URL, params={"event": game_id}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -158,3 +167,21 @@ def get_injuries(game_id: str) -> dict[str, pd.DataFrame]:
         return result
     except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
         return {}
+
+
+def get_injuries_batch(game_ids: list[str]) -> dict[str, dict[str, pd.DataFrame]]:
+    """get_injuries() for several games at once, fetched concurrently.
+
+    A full week's slate is ~16 games, and each ESPN round-trip takes close to a second -
+    calling get_injuries() once per game in a loop stacks up to 15+ seconds sequential
+    (this is exactly what daily_update.py and the Weekly Report tab were doing, and it
+    showed up as a dominant chunk of their runtime). Fetching them concurrently instead
+    bounds the wait to roughly the slowest single call, same fix weather.py already uses
+    for forecasts (see prefetch_forecasts).
+    """
+    unique_ids = list(dict.fromkeys(game_ids))
+    if not unique_ids:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(16, len(unique_ids))) as pool:
+        results = pool.map(get_injuries, unique_ids)
+    return dict(zip(unique_ids, results))

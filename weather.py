@@ -15,6 +15,11 @@ import requests
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
+# A shared Session avoids re-building a connection pool (and re-parsing the OS
+# certificate trust store) on every call - a real cost (~0.4-1.4s) that otherwise gets
+# paid independently by every thread in prefetch_forecasts' concurrent fetches.
+_session = requests.Session()
+
 # Approximate stadium coordinates for all 32 teams. Good enough for a regional weather
 # read - we don't need rooftop precision, just "is it windy/cold in this city today."
 STADIUM_COORDS = {
@@ -86,7 +91,7 @@ def get_forecast(team: str, game_date: str) -> dict | None:
     lat, lon = coords
 
     try:
-        resp = requests.get(
+        resp = _session.get(
             FORECAST_URL,
             params={
                 "latitude": lat,

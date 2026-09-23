@@ -36,15 +36,20 @@ def passer_rating(row_sum: dict) -> float:
     return (a + b + c + d) / 6 * 100
 
 
-def _starting_qb_from(team_hist: pd.DataFrame, n_games: int = 5) -> str | None:
+def _starting_qb_from(team_hist: pd.DataFrame, n_games: int = 5, qb_hist: pd.DataFrame | None = None) -> str | None:
     """Whoever has thrown the most passes for this team over their last n_games team games,
     given a history slice already filtered to that one team.
 
     Using trailing volume rather than just the single most recent game avoids getting fooled
     when the presumed starter sits out a meaningless season finale (or a stretch at the end of
     a playoff run) and a backup picks up mop-up snaps right before the cutoff.
+
+    Pass qb_hist (team_hist already filtered to position == "QB") when the caller has already
+    computed it - team_form_snapshot needs that same filter again for _qb_tenure, and this
+    avoids scanning the same team history for QB rows twice per prediction.
     """
-    qb_hist = team_hist[team_hist["position"] == "QB"]
+    if qb_hist is None:
+        qb_hist = team_hist[team_hist["position"] == "QB"]
     if qb_hist.empty:
         return None
     recent_weeks = qb_hist[["season", "week"]].drop_duplicates().sort_values(["season", "week"]).tail(n_games)
@@ -67,19 +72,24 @@ def current_starting_qb(weekly: pd.DataFrame, team: str, season: int, week: int,
 QB_TENURE_WINDOW = 15  # team-games looked back to tell an established starter from a newly-installed one
 
 
-def _qb_tenure(team_hist: pd.DataFrame, qb: str, window: int = QB_TENURE_WINDOW) -> int:
+def _qb_tenure(
+    team_hist: pd.DataFrame, qb: str, window: int = QB_TENURE_WINDOW, qb_hist: pd.DataFrame | None = None
+) -> int:
     """How many of the team's last `window` QB-games this specific player actually
     started. Low tenure (a rookie's first start, a just-inserted injury replacement) means
     Elo hasn't had a chance to absorb this QB's level yet; high tenure (an established
     starter) means it almost certainly already has, from real outcomes with them playing.
+
+    Pass qb_hist (see _starting_qb_from) to reuse an already-computed QB-position filter.
     """
-    qb_hist = team_hist[team_hist["position"] == "QB"]
+    if qb_hist is None:
+        qb_hist = team_hist[team_hist["position"] == "QB"]
     recent_weeks = qb_hist[["season", "week"]].drop_duplicates().sort_values(["season", "week"]).tail(window)
     recent = qb_hist.merge(recent_weeks, on=["season", "week"])
     return int((recent["player_name"] == qb).sum())
 
 
-def _qb_form_from(team_hist: pd.DataFrame, qb: str | None, n_games: int = 5) -> dict:
+def _qb_form_from(team_hist: pd.DataFrame, qb: str | None, n_games: int = 5, qb_hist: pd.DataFrame | None = None) -> dict:
     if qb is None:
         return {"player_name": None, "games": 0, "passer_rating": None, "pass_yards_per_game": None, "tenure": 0}
 
@@ -95,7 +105,7 @@ def _qb_form_from(team_hist: pd.DataFrame, qb: str | None, n_games: int = 5) -> 
         "pass_yards_per_game": round(float(rows["passing_yards"].mean()), 1),
         "pass_tds_per_game": round(float(rows["passing_tds"].mean()), 2),
         "interceptions_per_game": round(float(rows["interceptions"].mean()), 2),
-        "tenure": _qb_tenure(team_hist, qb),
+        "tenure": _qb_tenure(team_hist, qb, qb_hist=qb_hist),
     }
 
 
@@ -145,15 +155,24 @@ def _player_trailing_skill_stats(team_hist: pd.DataFrame, player_name: str, posi
 
 
 def _skill_leaders_from(
-    team_hist: pd.DataFrame, positions: tuple[str, ...], n_games: int = 5, top_n: int = 2
+    team_hist: pd.DataFrame,
+    positions: tuple[str, ...],
+    n_games: int = 5,
+    top_n: int = 2,
+    pos_hist: pd.DataFrame | None = None,
 ) -> list[dict]:
     """Combined RB/WR/TE leaderboard by trailing yards, for the general "top skill
     players" display only - see _leader_for_position() for identifying the specific
     featured player at one position, which uses whichever stat actually predicts that
     position's real-game leader best (yards and targets aren't comparable in magnitude
     across positions, so this combined ranking is just a production summary, not a
-    per-position "who's featured" signal)."""
-    pos_hist = team_hist[team_hist["position"].isin(positions)]
+    per-position "who's featured" signal).
+
+    Pass pos_hist (team_hist already filtered to position in `positions`) when the caller
+    has already computed it, e.g. team_form_snapshot sharing it with _leader_for_position
+    instead of each re-scanning the full team history separately."""
+    if pos_hist is None:
+        pos_hist = team_hist[team_hist["position"].isin(positions)]
     if pos_hist.empty:
         return []
 
@@ -189,13 +208,21 @@ def _skill_leaders_from(
 _LEADER_RANK_STAT = {"RB": "yards", "WR": "targets", "TE": "targets"}
 
 
-def _leader_for_position(team_hist: pd.DataFrame, position: str, n_games: int = 5) -> dict | None:
+def _leader_for_position(
+    team_hist: pd.DataFrame, position: str, n_games: int = 5, pos_hist: pd.DataFrame | None = None
+) -> dict | None:
     """The single most-featured player at one position, ranked by whichever trailing
     stat best predicts who actually leads that position in a real game (see
     _LEADER_RANK_STAT) - this is what drives the RB/WR/TE prop probabilities and the
     "featured player" display, so it uses the validated-best signal per position,
-    unlike _skill_leaders_from's combined display-only ranking."""
-    pos_hist = team_hist[team_hist["position"] == position]
+    unlike _skill_leaders_from's combined display-only ranking.
+
+    Pass pos_hist (team_hist already filtered to RB/WR/TE) to skip a second full scan of
+    the team history - see _skill_leaders_from's docstring. It gets filtered down to just
+    this one position first, which is identical to filtering team_hist directly since
+    pos_hist is already a superset of this position's rows."""
+    pos_hist = pos_hist if pos_hist is not None else team_hist
+    pos_hist = pos_hist[pos_hist["position"] == position]
     if pos_hist.empty:
         return None
 
@@ -242,14 +269,16 @@ def team_form_snapshot(hist: pd.DataFrame, team: str, n_games: int = 5) -> dict:
     filtered by team) per team all season.
     """
     team_hist = hist[hist["recent_team"] == team]
-    qb = _starting_qb_from(team_hist, n_games)
+    qb_hist = team_hist[team_hist["position"] == "QB"]
+    qb = _starting_qb_from(team_hist, n_games, qb_hist=qb_hist)
+    skill_pos_hist = team_hist[team_hist["position"].isin(("RB", "WR", "TE"))]
 
     return {
-        "qb": _qb_form_from(team_hist, qb, n_games),
-        "skill": _skill_leaders_from(team_hist, ("RB", "WR", "TE"), n_games, top_n=2),
-        "rb": _leader_for_position(team_hist, "RB", n_games),
-        "wr": _leader_for_position(team_hist, "WR", n_games),
-        "te": _leader_for_position(team_hist, "TE", n_games),
+        "qb": _qb_form_from(team_hist, qb, n_games, qb_hist=qb_hist),
+        "skill": _skill_leaders_from(team_hist, ("RB", "WR", "TE"), n_games, top_n=2, pos_hist=skill_pos_hist),
+        "rb": _leader_for_position(team_hist, "RB", n_games, pos_hist=skill_pos_hist),
+        "wr": _leader_for_position(team_hist, "WR", n_games, pos_hist=skill_pos_hist),
+        "te": _leader_for_position(team_hist, "TE", n_games, pos_hist=skill_pos_hist),
     }
 
 
