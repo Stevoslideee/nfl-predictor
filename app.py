@@ -23,13 +23,37 @@ from predict import (
     prefetch_weather_for_matchups,
     weekly_hist_as_of,
 )
-from weekly_report import build_recap_row, build_report_row, favorite
+from weekly_report import build_recap_row, build_report_row, confidence_label, favorite
 
 SEASONS = list(range(2010, dt.date.today().year + 1))
 INJURY_SEASONS = list(range(dt.date.today().year - 2, dt.date.today().year + 1))
 
 st.set_page_config(page_title="NFL Matchup Predictor", page_icon="🏈", layout="centered")
 st.title("🏈 NFL Matchup Predictor")
+
+
+def render_win_prob_bar(home_team: str, away_team: str, home_win_prob: float) -> str:
+    """A two-team horizontal bar (a friendlier, more scannable alternative to a plain
+    percentage or a single-team progress bar) - each side sized and labeled by that
+    team's own win probability, colored so the favored side pops."""
+    home_pct = home_win_prob * 100
+    away_pct = 100 - home_pct
+    home_color = "#FF4B4B" if home_pct >= away_pct else "#3B4B63"
+    away_color = "#FF4B4B" if away_pct > home_pct else "#3B4B63"
+    # keep each label readable even at a lopsided split
+    home_w = max(home_pct, 14)
+    away_w = max(away_pct, 14)
+    total = home_w + away_w
+    home_w, away_w = home_w / total * 100, away_w / total * 100
+    return f"""
+<div style="display:flex; width:100%; height:44px; border-radius:8px; overflow:hidden;
+            font-family:inherit; font-weight:700; font-size:15px;">
+  <div style="width:{away_w:.1f}%; background:{away_color}; display:flex; align-items:center;
+              justify-content:center; color:white; white-space:nowrap;">{away_team} {away_pct:.0f}%</div>
+  <div style="width:{home_w:.1f}%; background:{home_color}; display:flex; align-items:center;
+              justify-content:center; color:white; white-space:nowrap;">{home_team} {home_pct:.0f}%</div>
+</div>
+"""
 
 
 @st.cache_data(show_spinner="Loading NFL history (first run downloads and caches it locally)...")
@@ -154,7 +178,7 @@ predict_tab, live_tab, pbp_tab, week_tab = st.tabs(
 )
 
 with predict_tab:
-    st.caption("Elo ratings + recent QB form. An informed opinion, not a guarantee — see the README for backtested accuracy.")
+    st.caption("Pick a game below, or choose any two teams — get a plain-English pick backed by 15+ years of real results.")
 
     current_year = dt.date.today().year
     if "season_input" not in st.session_state or "week_input" not in st.session_state:
@@ -162,11 +186,12 @@ with predict_tab:
         st.session_state.setdefault("season_input", default_board["season"] or current_year)
         st.session_state.setdefault("week_input", default_board["week"] or 1)
 
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        season = st.number_input("Season", min_value=SEASONS[0], max_value=current_year + 1, key="season_input")
-    with sc2:
-        week = st.number_input("Week (predict as of before this week)", min_value=1, max_value=22, key="week_input")
+    with st.expander("📅 Predicting a past or future week instead?"):
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            season = st.number_input("Season", min_value=SEASONS[0], max_value=current_year + 1, key="season_input")
+        with sc2:
+            week = st.number_input("Week (predict as of before this week)", min_value=1, max_value=22, key="week_input")
 
     def _apply_quick_pick():
         picked = st.session_state.get("quick_pick")
@@ -189,19 +214,22 @@ with predict_tab:
             st.session_state["quick_pick"] = NO_QUICK_PICK
             st.session_state["_quick_pick_week_key"] = qp_week_key
         st.selectbox(
-            "Quick-pick a game this week",
+            "This week's games",
             [NO_QUICK_PICK] + list(game_labels.keys()),
             key="quick_pick",
             on_change=_apply_quick_pick,
+            help="Picking a game here fills in the two teams below and shows the prediction right away.",
         )
     else:
-        st.caption("No games found for that season/week to quick-pick from.")
+        st.caption("No games found for that season/week.")
+
+    st.caption("...or pick any two teams yourself (works for a hypothetical or future matchup too):")
 
     st.session_state.setdefault("home_team_select", "KC" if "KC" in teams else teams[0])
 
     col1, col2 = st.columns(2)
     with col1:
-        home_team = st.selectbox("Home team", teams, key="home_team_select")
+        home_team = st.selectbox("Home team", teams, key="home_team_select", help="The team hosting the game — home field gives a small real advantage the model accounts for.")
     with col2:
         away_options = [t for t in teams if t != home_team]
         if st.session_state.get("away_team_select") not in away_options:
@@ -226,15 +254,11 @@ with predict_tab:
         prob_pct = pred.home_win_prob * 100
         winner = home_team if pred.home_win_prob >= 0.5 else away_team
         confidence = max(prob_pct, 100 - prob_pct)
+        margin_pts = abs(pred.projected_margin)
 
-        st.metric(
-            f"Projected winner: {winner}",
-            f"{confidence:.0f}% confidence",
-            f"{home_team} {pred.projected_margin:+.1f} pts"
-            if pred.projected_margin >= 0
-            else f"{away_team} {-pred.projected_margin:+.1f} pts",
-        )
-        st.progress(pred.home_win_prob, text=f"{home_team} win probability: {prob_pct:.0f}%")
+        st.markdown(f"### 🏆 {winner} favored — {confidence_label(confidence)} ({confidence:.0f}%)")
+        st.caption(f"Projected final margin: {winner} by about {margin_pts:.1f} points.")
+        st.markdown(render_win_prob_bar(home_team, away_team, pred.home_win_prob), unsafe_allow_html=True)
 
         for team, status, note in [
             (home_team, pred.home_qb_status, pred.home_qb_note),
@@ -282,15 +306,24 @@ with predict_tab:
                     blended_pct = odds_mod.blended_probability(pred.home_win_prob, match["home_win_prob"]) * 100
 
                     mc1, mc2, mc3, mc4 = st.columns(4)
-                    mc1.metric(f"Model: {home_team} win%", f"{prob_pct:.0f}%")
-                    mc2.metric(f"Market: {home_team} win%", f"{market_pct:.0f}%", f"{match['num_books']} books")
-                    mc3.metric("Model vs. market", f"{edge:+.0f} pts")
-                    mc4.metric(f"Blended (untested): {home_team} win%", f"{blended_pct:.0f}%")
+                    mc1.metric(f"This model: {home_team} win%", f"{prob_pct:.0f}%", help="This app's own prediction.")
+                    mc2.metric(
+                        f"Sportsbooks: {home_team} win%",
+                        f"{market_pct:.0f}%",
+                        f"{match['num_books']} books",
+                        delta_color="off",
+                        help="What real sportsbook odds imply, averaged across books and adjusted for their built-in profit margin (the \"vig\").",
+                    )
+                    mc3.metric("Gap", f"{edge:+.0f} pts", help="How far this model's number is from the sportsbook number — a bigger gap usually means one side is missing context.")
+                    mc4.metric(
+                        f"50/50 blend: {home_team} win%",
+                        f"{blended_pct:.0f}%",
+                        help="A simple average of the two, shown for reference — not yet proven more accurate than either alone.",
+                    )
                     st.caption(
-                        "Blended is a simple 50/50 average of model and market, shown for "
-                        "reference - unlike everything else here, this weighting isn't "
-                        "backtested (The Odds API has no historical archive to validate "
-                        "against). Treat it as directional, not a calibrated number."
+                        "The 50/50 blend isn't backtested like everything else here — there's no "
+                        "historical odds archive to check it against, so it's tracked live instead "
+                        "(see the Weekly Report tab's tracking record). Treat it as directional."
                     )
                     if winner != k_team:
                         st.caption(f"⚠️ Model and market disagree on the winner ({winner} vs. {k_team}) — check the injury report.")
@@ -389,9 +422,10 @@ with predict_tab:
                 show_td_prop(pred.away_te_td_prop)
 
         with st.expander("🏈 Team ratings & top skill players"):
+            st.caption("Strength rating: higher is better; 1500 is a league-average team.")
             ec1, ec2 = st.columns(2)
             with ec1:
-                st.markdown(f"**{home_team} Elo rating:** {pred.home_elo}")
+                st.markdown(f"**{home_team} strength rating:** {pred.home_elo}")
                 qb = pred.home_qb
                 if qb["player_name"]:
                     st.markdown(
@@ -405,7 +439,7 @@ with predict_tab:
                         f"{p['rushing_yards_per_game']} rush yds (last {p['games']})"
                     )
             with ec2:
-                st.markdown(f"**{away_team} Elo rating:** {pred.away_elo}")
+                st.markdown(f"**{away_team} strength rating:** {pred.away_elo}")
                 qb = pred.away_qb
                 if qb["player_name"]:
                     st.markdown(
@@ -439,6 +473,18 @@ with predict_tab:
             with st.expander("🔁 Recent head-to-head"):
                 st.dataframe(pred.head_to_head, hide_index=True, width='stretch')
 
+        with st.expander("ℹ️ How this prediction works"):
+            st.markdown(
+                "Built from **team strength ratings** (each team's rating moves up or down after "
+                "every game since 2010, based on who won, by how much, and against whom — the same "
+                "kind of rating chess and other sports use), adjusted for **recent quarterback form**, "
+                "**injuries**, **rest**, **divisional rivalry**, and **weather**. Checked against "
+                "1,670 real games from 2018-2024: it picked the winner **65% of the time**, close to "
+                "the 65-67% that real sportsbook lines hit. It's an informed opinion, not a "
+                "guarantee — see the [README](https://github.com/Stevoslideee/nfl-predictor) for the "
+                "full accuracy breakdown."
+            )
+
         st.caption(
             "Statistical estimate from public play-by-play data, not betting advice. "
             "Never wager more than you can afford to lose."
@@ -447,7 +493,7 @@ with predict_tab:
 with live_tab:
     st.caption("Live scores + box scores (auto-refresh 30s), each player's line next to their recent-form average.")
 
-    browse_past = st.checkbox("Browse a past week instead of the current one")
+    browse_past = st.checkbox("View a different week")
     sb_week = sb_season = None
     if browse_past:
         bc1, bc2 = st.columns(2)
@@ -530,7 +576,7 @@ with pbp_tab:
         "available through any public feed, ESPN's included."
     )
 
-    pbp_browse_past = st.checkbox("Browse a past week instead of the current one", key="pbp_browse_past")
+    pbp_browse_past = st.checkbox("View a different week", key="pbp_browse_past")
     pbp_sb_week = pbp_sb_season = None
     if pbp_browse_past:
         pc1, pc2 = st.columns(2)
@@ -738,7 +784,8 @@ with week_tab:
             summary = tracking.summarize(graded)
             st.caption(
                 f"{summary['games']} graded games - winner accuracy {summary['accuracy']:.0%}, "
-                f"Brier {summary['brier']:.4f}, mean margin error {summary['mean_margin_error']:.1f} pts."
+                f"calibration score {summary['brier']:.4f} (lower is better; 0 is a perfect forecast, "
+                f"0.25 is what always guessing 50/50 gets you), mean margin error {summary['mean_margin_error']:.1f} pts."
             )
             if summary["personnel_assumption_accuracy"] is not None:
                 st.caption(
@@ -759,6 +806,7 @@ with week_tab:
                     f"sample early on - treat accordingly."
                 )
                 mvm1, mvm2, mvm3 = st.columns(3)
-                mvm1.metric("Model", f"{summary['model_subset_accuracy']:.0%}", f"Brier {summary['model_subset_brier']:.4f}")
-                mvm2.metric("Market", f"{summary['market_accuracy']:.0%}", f"Brier {summary['market_brier']:.4f}")
-                mvm3.metric("Blended", f"{summary['blended_accuracy']:.0%}", f"Brier {summary['blended_brier']:.4f}")
+                brier_help = "Calibration score - lower is better, 0 is a perfect forecast."
+                mvm1.metric("Model", f"{summary['model_subset_accuracy']:.0%}", f"score {summary['model_subset_brier']:.4f}", delta_color="off", help=brier_help)
+                mvm2.metric("Market", f"{summary['market_accuracy']:.0%}", f"score {summary['market_brier']:.4f}", delta_color="off", help=brier_help)
+                mvm3.metric("Blended", f"{summary['blended_accuracy']:.0%}", f"score {summary['blended_brier']:.4f}", delta_color="off", help=brier_help)
