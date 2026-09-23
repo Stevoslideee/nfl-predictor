@@ -132,15 +132,28 @@ def backup_qb_form(hist: pd.DataFrame, team: str, exclude_qb: str, n_games: int 
     return _qb_form_from(team_hist, backup, n_games)
 
 
-def _player_trailing_skill_stats(team_hist: pd.DataFrame, player_name: str, position: str, n_games: int = 5) -> dict:
+def _player_trailing_skill_stats(
+    team_hist: pd.DataFrame, player_name: str, position: str, n_games: int = 5, _cache: dict | None = None
+) -> dict:
     """One player's own trailing-N-game stat line, regardless of which shared team-week
     window was used to identify them as a leader - the same "their own last N games"
     definition qb_trailing_form and props.prop_over_probability already use, so a
-    displayed average and any probability built from it always agree."""
+    displayed average and any probability built from it always agree.
+
+    Pass _cache (a plain dict, scoped to one team_form_snapshot call) when the same
+    team_hist/n_games is shared across several lookups in that call - a team's combined
+    RB/WR/TE leaderboard and its own position-specific leader routinely land on the same
+    player (e.g. the lead back is almost always in both), so without this the identical
+    stat line gets recomputed for them twice."""
+    if _cache is not None:
+        key = (player_name, position)
+        if key in _cache:
+            return _cache[key]
+
     rows = team_hist[team_hist["player_name"] == player_name].sort_values(["season", "week"]).tail(n_games)
     yards = rows[["rushing_yards", "receiving_yards"]].fillna(0).sum(axis=1)
     tds = rows[["rushing_tds", "receiving_tds"]].fillna(0).sum(axis=1)
-    return {
+    result = {
         "player_name": player_name,
         "position": position,
         "games": len(rows),
@@ -152,6 +165,9 @@ def _player_trailing_skill_stats(team_hist: pd.DataFrame, player_name: str, posi
         "targets_per_game": round(float(rows["targets"].mean()), 1) if len(rows) else 0.0,
         "receiving_yards_per_game": round(float(rows["receiving_yards"].mean()), 1) if len(rows) else 0.0,
     }
+    if _cache is not None:
+        _cache[(player_name, position)] = result
+    return result
 
 
 def _skill_leaders_from(
@@ -160,6 +176,7 @@ def _skill_leaders_from(
     n_games: int = 5,
     top_n: int = 2,
     pos_hist: pd.DataFrame | None = None,
+    _cache: dict | None = None,
 ) -> list[dict]:
     """Combined RB/WR/TE leaderboard by trailing yards, for the general "top skill
     players" display only - see _leader_for_position() for identifying the specific
@@ -193,7 +210,10 @@ def _skill_leaders_from(
     )
     # Once we know who the leader(s) are, report each one's own trailing stats rather
     # than the shared-window numbers used only to rank them.
-    return [_player_trailing_skill_stats(team_hist, r.player_name, r.position, n_games) for r in ranked.itertuples()]
+    return [
+        _player_trailing_skill_stats(team_hist, r.player_name, r.position, n_games, _cache=_cache)
+        for r in ranked.itertuples()
+    ]
 
 
 # Which trailing stat best predicts a position's REAL game leader, per a live-tracking
@@ -209,7 +229,11 @@ _LEADER_RANK_STAT = {"RB": "yards", "WR": "targets", "TE": "targets"}
 
 
 def _leader_for_position(
-    team_hist: pd.DataFrame, position: str, n_games: int = 5, pos_hist: pd.DataFrame | None = None
+    team_hist: pd.DataFrame,
+    position: str,
+    n_games: int = 5,
+    pos_hist: pd.DataFrame | None = None,
+    _cache: dict | None = None,
 ) -> dict | None:
     """The single most-featured player at one position, ranked by whichever trailing
     stat best predicts who actually leads that position in a real game (see
@@ -239,7 +263,7 @@ def _leader_for_position(
     ranked = recent.groupby("player_name")["rank_value"].mean().sort_values(ascending=False)
     if ranked.empty:
         return None
-    return _player_trailing_skill_stats(team_hist, ranked.index[0], position, n_games)
+    return _player_trailing_skill_stats(team_hist, ranked.index[0], position, n_games, _cache=_cache)
 
 
 def top_skill_players(
@@ -272,13 +296,19 @@ def team_form_snapshot(hist: pd.DataFrame, team: str, n_games: int = 5) -> dict:
     qb_hist = team_hist[team_hist["position"] == "QB"]
     qb = _starting_qb_from(team_hist, n_games, qb_hist=qb_hist)
     skill_pos_hist = team_hist[team_hist["position"].isin(("RB", "WR", "TE"))]
+    # scoped to this one call - a team's combined-yards leaderboard and its per-position
+    # leader (e.g. the lead back) routinely land on the same player; see
+    # _player_trailing_skill_stats's docstring
+    skill_stats_cache: dict = {}
 
     return {
         "qb": _qb_form_from(team_hist, qb, n_games, qb_hist=qb_hist),
-        "skill": _skill_leaders_from(team_hist, ("RB", "WR", "TE"), n_games, top_n=2, pos_hist=skill_pos_hist),
-        "rb": _leader_for_position(team_hist, "RB", n_games, pos_hist=skill_pos_hist),
-        "wr": _leader_for_position(team_hist, "WR", n_games, pos_hist=skill_pos_hist),
-        "te": _leader_for_position(team_hist, "TE", n_games, pos_hist=skill_pos_hist),
+        "skill": _skill_leaders_from(
+            team_hist, ("RB", "WR", "TE"), n_games, top_n=2, pos_hist=skill_pos_hist, _cache=skill_stats_cache
+        ),
+        "rb": _leader_for_position(team_hist, "RB", n_games, pos_hist=skill_pos_hist, _cache=skill_stats_cache),
+        "wr": _leader_for_position(team_hist, "WR", n_games, pos_hist=skill_pos_hist, _cache=skill_stats_cache),
+        "te": _leader_for_position(team_hist, "TE", n_games, pos_hist=skill_pos_hist, _cache=skill_stats_cache),
     }
 
 
