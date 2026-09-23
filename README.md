@@ -325,10 +325,13 @@ Register-ScheduledTask -TaskName "NFL Predictor Daily Update" -Action $action -T
 ```
 `-StartWhenAvailable` means it catches up on the next login if the PC was
 off at 8am, rather than silently skipping the day. This only runs
-locally (a Streamlit Community Cloud deployment doesn't have a way to
-run a scheduled background job) - if you're using the deployed version,
-run `daily_update.py` locally to keep the tracking record current, or
-just use the Weekly Report tab's button manually.
+locally (Streamlit Community Cloud itself has no way to run a scheduled
+background job) - if you're using the deployed version, run
+`daily_update.py` locally to keep the tracking record current, or just
+use the Weekly Report tab's button manually. See "Keeping the deployed
+app awake" below for a way to drive the deployed site itself from this
+same local automation, without needing it to run background jobs of
+its own.
 
 **Desktop notification when a week finishes grading:** rather than
 having to check in, `daily_update.py` sends a Windows toast notification
@@ -347,6 +350,43 @@ invokes (`PWSH_EXE` at the top of the file) - they have separate module
 paths, so installing into the wrong one means the notification call
 fails every run (logged to `predictions/daily_run.log`, not silent, but
 easy to miss if you're not checking that file).
+
+### Keeping the deployed app awake
+
+Community Cloud apps sleep after a period of inactivity, so the first
+visit after a while eats a cold start (a slow NFL-data fetch, then a
+slower first prediction while Elo/weekly-history caches are built for
+that specific week). `ping_deployed_app.py` avoids that by visiting the
+deployed site itself on a schedule and driving its real UI - not just an
+HTTP ping, since Streamlit's `@st.cache_data` caches are tied to actual
+function calls with actual arguments. A bare page load only warms
+`get_history()` (the slow initial fetch); this also opens the Weekly
+Report tab, fills in the current season/week (the same
+`live.get_scoreboard()` lookup `daily_update.py` uses), and clicks "Run
+weekly report" - which warms the *shared* Elo-state/weekly-history
+caches every game in that week's slate benefits from, not just one
+matchup. This doesn't sync or duplicate anything with the local
+`predictions/` log - the deployed app's cache is a separate, ephemeral
+process; this just keeps the live site itself fast for whoever opens it.
+
+Needs Playwright (a real headless browser, not in `requirements.txt`
+since the deployed app itself doesn't need it - only this local script
+does):
+```bash
+venv\Scripts\pip install -r requirements-dev.txt
+venv\Scripts\python -m playwright install chromium --with-deps
+```
+Set up as a Windows Scheduled Task, every 6 hours (Community Cloud's
+exact sleep threshold isn't published, so this errs frequent rather than
+risk a cold start):
+```powershell
+$action = New-ScheduledTaskAction -Execute "<path-to-venv>\Scripts\python.exe" -Argument "ping_deployed_app.py" -WorkingDirectory "<path-to-this-project>"
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+Register-ScheduledTask -TaskName "NFL Predictor Ping Deployed App" -Action $action -Trigger $trigger -Settings $settings
+```
+Update `APP_URL` at the top of `ping_deployed_app.py` if your deployed
+URL differs. Logs to `predictions/ping_deployed_app.log`.
 
 ## Run the tests
 
@@ -462,6 +502,11 @@ table - useful for scripting or a quick terminal check without opening the app.
 - **`daily_update.py`** - unattended entry point for a Windows Scheduled
   Task: logs the current week's predictions and re-grades finished ones,
   once a day, without anyone opening the app.
+- **`ping_deployed_app.py`** - keeps the Streamlit Community Cloud
+  deployment awake and pre-warms its cache for the current week by
+  driving its real UI with Playwright (a bare HTTP ping wouldn't warm
+  the `@st.cache_data` caches tied to a specific week) - see "Keeping the
+  deployed app awake" above.
 - **`weekly_report.py`** - the model-vs-market comparison for a whole week's
   slate at once, shared by the Weekly Report tab and the standalone CLI.
 - **`live.py`** - live/final scores and box scores from ESPN's public
