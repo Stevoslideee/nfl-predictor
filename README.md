@@ -408,6 +408,18 @@ matchup. This doesn't sync or duplicate anything with the local
 `predictions/` log - the deployed app's cache is a separate, ephemeral
 process; this just keeps the live site itself fast for whoever opens it.
 
+When the app has been fully asleep (not just cold-cached), Community
+Cloud shows a top-level "this app has gone to sleep" splash with its own
+wake-up button - there's no app iframe at all until that's clicked and
+the container finishes booting, which combined with this app's own data
+load has taken over a minute end to end. The script used to give up
+after one fixed 8-second wait, which meant it silently failed against a
+genuinely sleeping app every single time (caught by hand: the ping log
+showed several consecutive "couldn't find the app's iframe" failures
+right when the deployed app actually was asleep) - it now clicks the
+wake-up button if present and polls for the iframe for up to two minutes
+instead of giving up early.
+
 Needs Playwright (a real headless browser, not in `requirements.txt`
 since the deployed app itself doesn't need it - only this local script
 does):

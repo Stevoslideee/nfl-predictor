@@ -42,6 +42,45 @@ def _find_app_frame(page):
     return None
 
 
+WAKE_BUTTON_TEXT = "Yes, get this app back up!"
+
+# After enough inactivity, Community Cloud puts the app to sleep entirely - visiting it
+# then shows a top-level "Zzzz... this app has gone to sleep" splash with a wake-up
+# button, not the app's iframe at all. A fixed short wait before giving up on the iframe
+# (the previous approach) fails every single time against a genuinely sleeping app, since
+# there's no iframe to find until that button is clicked and the container boots back up
+# (which, combined with this app's own cold-start data load, can take well over a minute)
+# - this is exactly the failure mode that showed up repeatedly in the log.
+WAKE_TIMEOUT_MS = 20_000
+FRAME_POLL_TIMEOUT_MS = 120_000
+FRAME_POLL_INTERVAL_MS = 3_000
+
+
+def _wake_if_sleeping(page, f) -> None:
+    try:
+        button = page.get_by_role("button", name=WAKE_BUTTON_TEXT)
+        button.wait_for(state="visible", timeout=WAKE_TIMEOUT_MS)
+    except Exception:
+        return  # app wasn't asleep (or the splash didn't appear in time) - nothing to do
+    _log(f, "App was asleep - clicking to wake it back up.")
+    button.click()
+
+
+def _wait_for_app_frame(page, total_timeout_ms: int = FRAME_POLL_TIMEOUT_MS):
+    """Polls for the app's iframe instead of a single fixed sleep - a real cold start
+    (Community Cloud's own container boot, on top of this app's "Loading NFL history"
+    step) has taken 30+ seconds even after clicking the wake-up button, well past what a
+    one-shot short wait can cover."""
+    elapsed = 0
+    while elapsed < total_timeout_ms:
+        frame = _find_app_frame(page)
+        if frame is not None:
+            return frame
+        page.wait_for_timeout(FRAME_POLL_INTERVAL_MS)
+        elapsed += FRAME_POLL_INTERVAL_MS
+    return None
+
+
 def run(f) -> None:
     scoreboard = live.get_scoreboard(week=None, season=None)
     season, week = scoreboard.get("season"), scoreboard.get("week")
@@ -54,11 +93,11 @@ def run(f) -> None:
         try:
             page = browser.new_page()
             page.goto(APP_URL, timeout=60000)
-            page.wait_for_timeout(8000)  # cold start can take a while
+            _wake_if_sleeping(page, f)
 
-            app_frame = _find_app_frame(page)
+            app_frame = _wait_for_app_frame(page)
             if app_frame is None:
-                _log(f, "Couldn't find the app's iframe - site may still be waking up. Bare page load still warmed get_history().")
+                _log(f, "Couldn't find the app's iframe even after waiting - site may be having a real issue. Bare page load still warmed get_history().")
                 return
 
             if season is None:
