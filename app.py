@@ -11,6 +11,7 @@ import injuries as injuries_mod
 import live
 import odds as odds_mod
 import player_stats
+import team_colors
 import tracking
 from data import load_injuries, load_schedules, load_team_weekly_stats, load_weekly_player_stats
 from predict import (
@@ -34,24 +35,34 @@ st.title("🏈 NFL Matchup Predictor")
 
 def render_win_prob_bar(home_team: str, away_team: str, home_win_prob: float) -> str:
     """A two-team horizontal bar (a friendlier, more scannable alternative to a plain
-    percentage or a single-team progress bar) - each side sized and labeled by that
-    team's own win probability, colored so the favored side pops."""
+    percentage or a single-team progress bar) - each side sized by that team's own win
+    probability, in that team's own brand color with its logo, so it's recognizable at
+    a glance instead of a generic favored/underdog color pair (who's favored is already
+    stated in the headline above this bar)."""
     home_pct = home_win_prob * 100
     away_pct = 100 - home_pct
-    home_color = "#FF4B4B" if home_pct >= away_pct else "#3B4B63"
-    away_color = "#FF4B4B" if away_pct > home_pct else "#3B4B63"
+    home_color = team_colors.team_color(home_team)
+    away_color = team_colors.team_color(away_team)
+    home_text = team_colors.readable_text_color(home_color)
+    away_text = team_colors.readable_text_color(away_color)
     # keep each label readable even at a lopsided split
     home_w = max(home_pct, 14)
     away_w = max(away_pct, 14)
     total = home_w + away_w
     home_w, away_w = home_w / total * 100, away_w / total * 100
     return f"""
-<div style="display:flex; width:100%; height:44px; border-radius:8px; overflow:hidden;
+<div style="display:flex; width:100%; height:52px; border-radius:8px; overflow:hidden;
             font-family:inherit; font-weight:700; font-size:15px;">
   <div style="width:{away_w:.1f}%; background:{away_color}; display:flex; align-items:center;
-              justify-content:center; color:white; white-space:nowrap;">{away_team} {away_pct:.0f}%</div>
+              justify-content:center; gap:8px; color:{away_text}; white-space:nowrap;">
+    <img src="{team_colors.logo_url(away_team)}" style="height:28px; width:28px; object-fit:contain;"/>
+    {away_team} {away_pct:.0f}%
+  </div>
   <div style="width:{home_w:.1f}%; background:{home_color}; display:flex; align-items:center;
-              justify-content:center; color:white; white-space:nowrap;">{home_team} {home_pct:.0f}%</div>
+              justify-content:center; gap:8px; color:{home_text}; white-space:nowrap;">
+    <img src="{team_colors.logo_url(home_team)}" style="height:28px; width:28px; object-fit:contain;"/>
+    {home_team} {home_pct:.0f}%
+  </div>
 </div>
 """
 

@@ -11,6 +11,8 @@ team's own goal line, 100 is the away team's own goal line, regardless of who
 has the ball, so a fixed field diagram doesn't need to flip sides play to play.
 """
 
+import team_colors
+
 FIELD_LEFT = 100.0  # px, x-coordinate of the home team's own goal line
 FIELD_RIGHT = 1100.0  # px, x-coordinate of the away team's own goal line
 FIELD_TOP = 50.0
@@ -35,7 +37,7 @@ def render_field_svg(play: dict, home_team: str, away_team: str) -> str:
     )
     yard_numbers = "".join(
         f'<text x="{FIELD_LEFT + y * PX_PER_YARD:.0f}" y="{FIELD_TOP - 12:.0f}" '
-        f'fill="white" fill-opacity="0.7" font-size="20" text-anchor="middle">'
+        f'fill="white" fill-opacity="0.7" font-size="30" text-anchor="middle">'
         f"{y if y <= 50 else 100 - y}</text>"
         for y in range(10, 100, 10)
     )
@@ -69,16 +71,30 @@ def render_field_svg(play: dict, home_team: str, away_team: str) -> str:
 
     home_label = home_team or "HOME"
     away_label = away_team or "AWAY"
+    home_color = team_colors.team_color(home_team) if home_team else "#123a6b"
+    away_color = team_colors.team_color(away_team) if away_team else "#6b1212"
+    mid_y = (FIELD_TOP + FIELD_BOTTOM) / 2
+
+    def _end_zone_logo(team: str | None, cx: float) -> str:
+        if not team:
+            return ""
+        size = 85
+        return (
+            f'<image href="{team_colors.logo_url(team)}" x="{cx - size / 2:.0f}" y="{mid_y - size / 2 - 15:.0f}" '
+            f'width="{size}" height="{size}"/>'
+        )
 
     svg = f"""
 <svg viewBox="0 0 1200 500" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto; background:#0b3d0b;">
   <rect x="{FIELD_LEFT:.0f}" y="{FIELD_TOP:.0f}" width="{FIELD_RIGHT-FIELD_LEFT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="#0f5c0f"/>
-  <rect x="0" y="{FIELD_TOP:.0f}" width="{FIELD_LEFT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="#123a6b"/>
-  <rect x="{FIELD_RIGHT:.0f}" y="{FIELD_TOP:.0f}" width="{1200-FIELD_RIGHT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="#6b1212"/>
-  <text x="{FIELD_LEFT/2:.0f}" y="{(FIELD_TOP+FIELD_BOTTOM)/2:.0f}" fill="white" font-size="28" font-weight="bold"
-        text-anchor="middle" transform="rotate(-90 {FIELD_LEFT/2:.0f} {(FIELD_TOP+FIELD_BOTTOM)/2:.0f})">{home_label}</text>
-  <text x="{(FIELD_RIGHT+1200)/2:.0f}" y="{(FIELD_TOP+FIELD_BOTTOM)/2:.0f}" fill="white" font-size="28" font-weight="bold"
-        text-anchor="middle" transform="rotate(90 {(FIELD_RIGHT+1200)/2:.0f} {(FIELD_TOP+FIELD_BOTTOM)/2:.0f})">{away_label}</text>
+  <rect x="0" y="{FIELD_TOP:.0f}" width="{FIELD_LEFT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="{home_color}"/>
+  <rect x="{FIELD_RIGHT:.0f}" y="{FIELD_TOP:.0f}" width="{1200-FIELD_RIGHT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="{away_color}"/>
+  {_end_zone_logo(home_team, FIELD_LEFT / 2)}
+  {_end_zone_logo(away_team, (FIELD_RIGHT + 1200) / 2)}
+  <text x="{FIELD_LEFT/2:.0f}" y="{mid_y + 52:.0f}" fill="{team_colors.readable_text_color(home_color)}" font-size="28" font-weight="bold"
+        text-anchor="middle">{home_label}</text>
+  <text x="{(FIELD_RIGHT+1200)/2:.0f}" y="{mid_y + 52:.0f}" fill="{team_colors.readable_text_color(away_color)}" font-size="28" font-weight="bold"
+        text-anchor="middle">{away_label}</text>
   {yard_lines}
   {yard_numbers}
   <rect x="{FIELD_LEFT:.0f}" y="{FIELD_TOP:.0f}" width="{FIELD_RIGHT-FIELD_LEFT:.0f}" height="{FIELD_BOTTOM-FIELD_TOP:.0f}" fill="none" stroke="white" stroke-width="2"/>

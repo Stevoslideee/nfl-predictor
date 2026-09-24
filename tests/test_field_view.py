@@ -1,4 +1,5 @@
 import field_view
+import team_colors
 
 
 def _play(abs_yard_line, possession, down=1, distance=10):
@@ -44,3 +45,21 @@ def test_render_field_svg_handles_missing_field_position():
     svg, caption = field_view.render_field_svg({"abs_yard_line": None, "possession": None, "down": None, "distance": None}, "BUF", "DET")
     assert caption == ""
     assert "<svg" in svg
+
+
+def test_render_field_svg_uses_each_teams_own_brand_color():
+    svg, _ = field_view.render_field_svg(_play(50, "BUF"), "BUF", "DET")
+    assert f'fill="{team_colors.team_color("BUF")}"' in svg
+    assert f'fill="{team_colors.team_color("DET")}"' in svg
+
+
+def test_render_field_svg_includes_each_teams_logo():
+    svg, _ = field_view.render_field_svg(_play(50, "BUF"), "BUF", "DET")
+    assert team_colors.logo_url("BUF") in svg
+    assert team_colors.logo_url("DET") in svg
+
+
+def test_render_field_svg_handles_unknown_team_gracefully():
+    # no logo/color lookup crash for a team code not in TEAM_COLORS
+    svg, _ = field_view.render_field_svg(_play(50, "BUF"), "BUF", "XYZ")
+    assert team_colors.DEFAULT_COLOR in svg
