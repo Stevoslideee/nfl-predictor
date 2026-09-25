@@ -90,6 +90,11 @@ def get_boxscore_cached(game_id):
     return live.get_boxscore(game_id)
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def get_boxscore_batch_cached(game_ids: tuple):
+    return live.get_boxscore_batch(list(game_ids))
+
+
 @st.cache_data(ttl=15, show_spinner=False)
 def get_play_by_play_cached(game_id):
     return live.get_play_by_play(game_id)
@@ -711,6 +716,8 @@ with week_tab:
                 )
             live_game_ids = tuple(g["game_id"] for g in report_games if g.get("status") != "Final")
             injuries_by_game = get_live_injuries_batch_cached(live_game_ids)
+            started_game_ids = tuple(g["game_id"] for g in report_games if g.get("status") not in (None, "Scheduled"))
+            boxscores_by_game = get_boxscore_batch_cached(started_game_ids)
             progress = st.progress(0.0, text="Running predictions...")
             for i, g in enumerate(report_games):
                 home, away = g["home_team"], g["away_team"]
@@ -721,7 +728,9 @@ with week_tab:
                     live_injury_lookup=live_lookup,
                 )
                 match = odds_mod.find_matchup(market_games, home, away)
-                rows.append(build_report_row(pred, home, away, match))
+                box_for_game = boxscores_by_game.get(g["game_id"])
+                top_performers = player_stats.live_top_performers(box_for_game) if box_for_game else None
+                rows.append(build_report_row(pred, home, away, match, top_performers))
                 tracking.log_prediction(
                     pred, int(wk_season), int(wk_week),
                     market_home_win_prob=match["home_win_prob"] if match else None,

@@ -73,11 +73,13 @@ def context_summary(pred: MatchupPrediction) -> str:
     return " | ".join(bits) if bits else "-"
 
 
-def build_report_row(pred: MatchupPrediction, home: str, away: str, match: dict | None) -> dict:
+def build_report_row(
+    pred: MatchupPrediction, home: str, away: str, match: dict | None, live_top_performers: dict | None = None
+) -> dict:
     m_team, m_pct, m_margin = favorite(home, away, pred.home_win_prob, pred.projected_margin)
     winner_line = f"{m_team} by {round(m_margin)}" if m_margin is not None else m_team
 
-    return {
+    row = {
         "Matchup": f"{away} @ {home}",
         "Predicted winner": winner_line,
         "Confidence": confidence_label(m_pct),
@@ -86,6 +88,22 @@ def build_report_row(pred: MatchupPrediction, home: str, away: str, match: dict 
         "Home attack": f"{home}: " + attack_note(pred.home_qb, [pred.home_rb, pred.home_wr, pred.home_te]),
         "Away attack": f"{away}: " + attack_note(pred.away_qb, [pred.away_rb, pred.away_wr, pred.away_te]),
     }
+    if live_top_performers:
+        row["Live QB"] = live_qb_summary(home, away, live_top_performers)
+    return row
+
+
+def live_qb_summary(home: str, away: str, top_performers: dict) -> str:
+    """A short "who's actually at QB right now" line for the Weekly Report table, from
+    live_top_performers' live box-score data - independent of the model's pre-game
+    trailing-stat assumption, which can miss a same-day lineup change no injury report
+    flagged (see the README's "Known limitations")."""
+    parts = []
+    for team in (home, away):
+        qb = top_performers.get(team, {}).get("passing")
+        if qb:
+            parts.append(f"{team}: {qb['player']}")
+    return " · ".join(parts) if parts else "-"
 
 
 def build_recap_row(pred: MatchupPrediction, home: str, away: str, week: int, game: dict) -> dict:
