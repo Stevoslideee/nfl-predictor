@@ -362,3 +362,45 @@ def recent_form_for_player(
         "position": rows["position"].iloc[-1],
         **{c: round(float(means[c]), 1) for c in available_cols},
     }
+
+
+_LIVE_STAT_CATEGORIES = ("passing", "rushing", "receiving")
+
+
+def live_top_performers(box: dict[str, list[dict]]) -> dict[str, dict[str, dict]]:
+    """For each team, whoever's actually leading each offensive category (passing,
+    rushing, receiving) right now, straight from ESPN's live box score - a real,
+    live-updating answer to "who's actually playing and producing," independent of any
+    pre-game trailing-stat assumption (which can be wrong when a lineup changes with no
+    injury designation to flag it - see README).
+
+    Ranked by yards within each category (the same column ESPN itself sorts by).
+    Returns {team: {category: {"player", "yards", "line"}}} where "line" is a short
+    plain-English stat summary ready to display. A team with nothing recorded yet in a
+    category (game hasn't started, or e.g. hasn't attempted a rush) simply has no entry
+    for it.
+    """
+    result: dict[str, dict[str, dict]] = {}
+    for team, rows in box.items():
+        best: dict[str, dict] = {}
+        for r in rows:
+            if r["category"] not in _LIVE_STAT_CATEGORIES:
+                continue
+            stat_map = dict(zip(r["labels"], r["stats"]))
+            try:
+                yards = float(stat_map.get("YDS", ""))
+            except ValueError:
+                continue
+            if r["category"] in best and yards <= best[r["category"]]["yards"]:
+                continue
+            best[r["category"]] = {"player": r["player"], "yards": yards, "line": _live_stat_line(r["category"], stat_map)}
+        result[team] = best
+    return result
+
+
+def _live_stat_line(category: str, stat_map: dict[str, str]) -> str:
+    if category == "passing":
+        return f"{stat_map.get('C/ATT', '?')}, {stat_map.get('YDS', '0')} yds, {stat_map.get('TD', '0')} TD, {stat_map.get('INT', '0')} INT"
+    if category == "rushing":
+        return f"{stat_map.get('CAR', '0')} car, {stat_map.get('YDS', '0')} yds, {stat_map.get('TD', '0')} TD"
+    return f"{stat_map.get('REC', '0')} rec, {stat_map.get('YDS', '0')} yds, {stat_map.get('TD', '0')} TD"  # receiving

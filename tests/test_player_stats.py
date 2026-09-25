@@ -132,3 +132,58 @@ def test_espn_name_to_nflverse_basic():
 
 def test_espn_name_to_nflverse_drops_suffix():
     assert player_stats.espn_name_to_nflverse("Michael Pittman Jr.") == "M.Pittman"
+
+
+def _box_row(player, category, labels, stats):
+    return {"category": category, "player": player, "labels": labels, "stats": stats}
+
+
+_PASS_LABELS = ["C/ATT", "YDS", "AVG", "TD", "INT", "SACKS", "QBR", "RTG"]
+_RUSH_LABELS = ["CAR", "YDS", "AVG", "TD", "LONG"]
+_REC_LABELS = ["REC", "YDS", "AVG", "TD", "LONG", "TGTS"]
+
+
+def test_live_top_performers_picks_the_real_starter_by_yards():
+    # the real case this feature exists for: whoever actually threw the passes, not
+    # whoever the model assumed pre-game
+    box = {
+        "ATL": [
+            _box_row("Michael Penix Jr.", "passing", _PASS_LABELS, ["18/25", "256", "10.2", "1", "1", "0-0", "84.5", "101.4"]),
+        ]
+    }
+    result = player_stats.live_top_performers(box)
+    assert result["ATL"]["passing"]["player"] == "Michael Penix Jr."
+    assert result["ATL"]["passing"]["yards"] == 256.0
+    assert result["ATL"]["passing"]["line"] == "18/25, 256 yds, 1 TD, 1 INT"
+
+
+def test_live_top_performers_ranks_multiple_players_by_yards():
+    box = {
+        "ATL": [
+            _box_row("Bijan Robinson", "rushing", _RUSH_LABELS, ["29", "194", "6.7", "2", "55"]),
+            _box_row("Brian Robinson Jr.", "rushing", _RUSH_LABELS, ["10", "50", "5.0", "1", "16"]),
+        ]
+    }
+    result = player_stats.live_top_performers(box)
+    assert result["ATL"]["rushing"]["player"] == "Bijan Robinson"
+    assert result["ATL"]["rushing"]["line"] == "29 car, 194 yds, 2 TD"
+
+
+def test_live_top_performers_receiving_line():
+    box = {"GB": [_box_row("Matthew Golden", "receiving", _REC_LABELS, ["5", "100", "20.0", "1", "45", "12"])]}
+    result = player_stats.live_top_performers(box)
+    assert result["GB"]["receiving"]["line"] == "5 rec, 100 yds, 1 TD"
+
+
+def test_live_top_performers_ignores_non_offensive_categories():
+    box = {"ATL": [_box_row("Some Kicker", "kicking", ["FG"], ["1/1"])]}
+    assert player_stats.live_top_performers(box) == {"ATL": {}}
+
+
+def test_live_top_performers_empty_box_score():
+    assert player_stats.live_top_performers({}) == {}
+
+
+def test_live_top_performers_handles_missing_yards_gracefully():
+    box = {"ATL": [_box_row("Nobody", "passing", ["C/ATT"], ["0/0"])]}  # no YDS column at all
+    assert player_stats.live_top_performers(box) == {"ATL": {}}

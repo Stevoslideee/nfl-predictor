@@ -283,6 +283,31 @@ with predict_tab:
         for note in pred.context_notes:
             st.caption(f"↳ {note}")
 
+        game_now = live.find_game(week_board["games"], home_team, away_team)
+        if game_now is not None and game_now.get("status") not in (None, "Scheduled"):
+            box_now = get_boxscore_cached(game_now["game_id"])
+            top_performers = player_stats.live_top_performers(box_now) if box_now else {}
+            if top_performers.get(home_team) or top_performers.get(away_team):
+                with st.expander("⭐ Star players on the roster", expanded=True):
+                    st.caption(
+                        "Who's actually leading each team right now, pulled live from the real box "
+                        "score - independent of the model's pre-game assumption above, which is built "
+                        "from trailing stats and can miss a same-day lineup change no injury report "
+                        "flagged (see \"How this prediction works\" below)."
+                    )
+                    spc1, spc2 = st.columns(2)
+                    category_label = {"passing": "QB", "rushing": "RB", "receiving": "REC"}
+                    for col, team in ((spc1, home_team), (spc2, away_team)):
+                        with col:
+                            st.caption(team)
+                            performers = top_performers.get(team, {})
+                            if not performers:
+                                st.caption("No stats yet.")
+                            for category in ("passing", "rushing", "receiving"):
+                                p = performers.get(category)
+                                if p:
+                                    st.markdown(f"**{category_label[category]} {p['player']}** — {p['line']}")
+
         mc_header, mc_refresh = st.columns([4, 1])
         mc_header.markdown("**Market comparison**")
         if mc_refresh.button("🔄 Refresh", key="refresh_odds_predict"):

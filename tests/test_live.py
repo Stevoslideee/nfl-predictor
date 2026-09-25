@@ -116,6 +116,34 @@ def test_get_injuries_batch_empty_input_returns_empty_dict():
     assert live.get_injuries_batch([]) == {}
 
 
+def test_get_boxscore_batch_fetches_each_game_and_keys_by_id(monkeypatch):
+    calls = []
+
+    def fake_get_boxscore(game_id):
+        calls.append(game_id)
+        return {"NYG": [{"category": "passing", "player": game_id}]}
+
+    monkeypatch.setattr(live, "get_boxscore", fake_get_boxscore)
+    result = live.get_boxscore_batch(["111", "222"])
+
+    assert sorted(calls) == ["111", "222"]
+    assert result == {
+        "111": {"NYG": [{"category": "passing", "player": "111"}]},
+        "222": {"NYG": [{"category": "passing", "player": "222"}]},
+    }
+
+
+def test_get_boxscore_batch_deduplicates_game_ids(monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "get_boxscore", lambda game_id: calls.append(game_id) or {})
+    live.get_boxscore_batch(["111", "111", "222"])
+    assert sorted(calls) == ["111", "222"]
+
+
+def test_get_boxscore_batch_empty_input_returns_empty_dict():
+    assert live.get_boxscore_batch([]) == {}
+
+
 def _pbp_payload(previous_plays, current_plays=None):
     payload = {
         "header": {

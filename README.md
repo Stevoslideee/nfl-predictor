@@ -511,6 +511,10 @@ table - useful for scripting or a quick terminal check without opening the app.
   team's history from scratch - found by profiling a real prediction run
   (2.3x faster on this function, same output every time, since filtering an
   already-filtered subset further can't drop or add rows).
+  `live_top_performers()` is a live, in-game counterpart to all of this -
+  instead of a trailing-stat assumption, it reads ESPN's live box score
+  directly to show whoever's actually leading passing/rushing/receiving for
+  each team right now (see "Known limitations" below for why this exists).
 - **`predict.py`** - combines Elo, the QB-form adjustment, and the four
   context adjustments (injury/rest/division/weather) into a final win
   probability and projected point margin. `qb_elo_adjustment` weights its
@@ -610,6 +614,24 @@ table - useful for scripting or a quick terminal check without opening the app.
   sources for that specific case, including official depth charts, and
   none of them ever reflected the real decision, even the day after the
   game. Some lineup surprises just aren't in any free structured data.
+  Confirmed this again in week 3 2026 (ATL @ GB): the model assumed backup
+  C.Rush at QB based on real trailing snap volume, but M.Penix Jr. started
+  instead - a pure coaching decision with zero injury designation on either
+  player beforehand. Checked directly whether ESPN's API exposes the NFL's
+  real pre-kickoff inactive list (released ~90 minutes before game time,
+  separate from the injury report) - it doesn't: `boxscore.players` is
+  `null` for any game that hasn't started yet, with no separate
+  inactives/roster field anywhere in the response. There's no free,
+  structured way to see the actual lineup before kickoff.
+
+  What the live box score *can* do, the moment a game starts, is show who's
+  actually playing - the Matchup Predictor tab's "⭐ Star players on the
+  roster" section (`player_stats.live_top_performers`) pulls the real
+  passing/rushing/receiving leader for each team straight from ESPN's live
+  box score, independent of the pre-game trailing-stat assumption. It
+  wouldn't have prevented this specific miss (nothing could, before
+  kickoff), but it means the real lineup is visible within minutes of
+  kickoff instead of only after the final score.
 - Player prop probabilities are a normal-distribution approximation, not yet
   backtested for calibration - useful as directional context, not a precise
   forecast. With fewer than a few games of their own history (a rookie's

@@ -254,3 +254,16 @@ def get_injuries_batch(game_ids: list[str]) -> dict[str, dict[str, pd.DataFrame]
     with ThreadPoolExecutor(max_workers=min(16, len(unique_ids))) as pool:
         results = pool.map(get_injuries, unique_ids)
     return dict(zip(unique_ids, results))
+
+
+def get_boxscore_batch(game_ids: list[str]) -> dict[str, dict[str, list[dict]]]:
+    """get_boxscore() for several games at once, fetched concurrently - same reasoning
+    as get_injuries_batch: checking a whole week's slate one game at a time is exactly
+    the sequential-network-call pattern that turned out to be the dominant cost
+    elsewhere in this app."""
+    unique_ids = list(dict.fromkeys(game_ids))
+    if not unique_ids:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(16, len(unique_ids))) as pool:
+        results = pool.map(get_boxscore, unique_ids)
+    return dict(zip(unique_ids, results))
